@@ -1,0 +1,15 @@
+export {};
+declare global {
+  type StudioSettings = { ffmpegPath: string; separatorExecutable: string; separatorModel: string };
+  type ExportStem = { path: string; name: string; role: string; voice: string; volume: number };
+  type StudioBridge = {
+    getSettings(): Promise<StudioSettings>; saveSettings(settings: StudioSettings): Promise<StudioSettings>;
+    getPathForFile(file: File): string; registerMedia(filePath: string): Promise<string>;
+    chooseAudioFiles(): Promise<string[]>; chooseImageFile(): Promise<string | null>;
+    saveText(input: { name: string; extension: string; content: string }): Promise<string | null>;
+    exportKit(input: { name: string; manifest: string; lyrics: Record<string, string>; stems: ExportStem[]; cdgPath?: string | null }): Promise<string | null>;
+    exportVideo(input: { name: string; duration: number; artist: string; title: string; ffmpegPath: string; backgroundPath?: string | null; stems: ExportStem[]; ass: string }): Promise<string | null>;
+    separate(input: { sourcePath: string; executable: string; model: string }): Promise<{ files: string[]; outputDirectory: string }>;
+  };
+  interface Window { studio: StudioBridge; }
+}
