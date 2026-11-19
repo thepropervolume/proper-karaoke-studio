@@ -1,6 +1,6 @@
 # Prototype scope
 
-Version 0.2.0 imports local stems, previews them through the Karaoke Booth Web Audio renderer, captures line or word-level lyric timing, and exports an MP4 or TPV kit. Studio uses one editor mode rather than separate basic and advanced modes.
+Version 0.3.0 imports local stems, previews them through the Karaoke Booth Web Audio renderer, force-aligns user-supplied lyrics locally with WhisperX, captures line or word-level timing manually, and exports an MP4 or TPV kit. Studio uses one editor mode rather than separate basic and advanced modes. AI alignment never discovers or transcribes lyric text; it only assigns timestamps to the supplied words.
 
 ## Available
 
