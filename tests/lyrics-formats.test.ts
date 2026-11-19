@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseLyricsFile, parseLrc, parseSrt, toAss, toLrc, toLyricsJson, toSrt } from '../src/domain/lyrics-formats';
-import { newLyricLines, toPortableKitProject, toRenderTiming } from '../src/domain/project';
+import { finishTimedWord, newLyricLines, recordTimedWordStart, seedTimedWords, timedWordCount, toPortableKitProject, toRenderTiming } from '../src/domain/project';
 
 test('round trips Enhanced LRC word timing and metadata', () => {
   const parsed = parseLrc('[ti:Popular]\n[ar:Nada Surf]\n[00:12.30]<00:12.30>Pop <00:12.70>ular');
@@ -45,6 +45,31 @@ test('creates karaoke-tagged subtitle cues for MP4 export', () => {
   const ass = toAss('Song', 'Artist', 5, parsed.lines);
   assert.match(ass, /Dialogue: 0,0:00:01\.00/);
   assert.match(ass, /\\kf/);
+});
+
+test('seeds words while preserving whitespace and records precise manual starts', () => {
+  const seeded = seedTimedWords(newLyricLines('Hello, bright world\nAgain', 12));
+  assert.equal(timedWordCount(seeded), 4);
+  assert.deepEqual(seeded[0].words.map(word => word.text), ['Hello, ', 'bright ', 'world']);
+
+  const first = recordTimedWordStart(seeded, 0, 0.4);
+  const second = recordTimedWordStart(first, 1, 0.9);
+  assert.equal(second[0].words[0].startSeconds, 0.4);
+  assert.equal(second[0].words[0].endSeconds, 0.9);
+  assert.equal(second[0].words[1].startSeconds, 0.9);
+  assert.equal(second[0].startSeconds, 0.4);
+  assert.equal(second[0].endSeconds, second[0].words.at(-1)?.endSeconds);
+});
+
+test('finishes a manual word cue and retains imported timings when the text matches', () => {
+  const seeded = seedTimedWords(newLyricLines('A song', 8));
+  const first = recordTimedWordStart(seeded, 0, 0.75);
+  const captured = recordTimedWordStart(first, 1, 1.25);
+  const finished = finishTimedWord(captured, 1, 1.8);
+  assert.equal(finished[0].words[0].endSeconds, 1.25);
+  assert.equal(finished[0].words[1].endSeconds, 1.8);
+  assert.equal(finished[0].endSeconds, 1.8);
+  assert.equal(seedTimedWords(finished)[0].words[0].startSeconds, 0.75);
 });
 
 test('rejects invalid minute/second fields and backwards SRT cues', () => {

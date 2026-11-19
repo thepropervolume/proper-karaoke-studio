@@ -56,6 +56,13 @@ input[type=range] { padding: 0; accent-color: #0eb7ff; }
 .button-like:hover { background: #382b50; border-color: #8e79b5; }
 .preview-empty { position: absolute; left: 0; right: 0; bottom: 36px; text-align: center; color: #aaa0ba; text-shadow: 0 2px 12px #000; font-size: 18px; font-weight: 600; pointer-events: none; }
 .row input[type=number] { min-width: 0; width: 100%; }
+.cue-block { display: grid; gap: 7px; padding: 8px 0; border-bottom: 1px solid #332a43; }
+.word-cues { padding: 0 0 0 10px; color: #aaa0ba; }
+.word-cues summary { cursor: pointer; font-size: 11px; padding: 4px 0 7px; }
+.word-cue { padding: 3px 0; }
+.word-cue input[type=number] { width: 76px; padding: 6px; font-size: 11px; }
+.word-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: #d9d2e6; }
+.word-cue.active .word-label { color: #ff8fca; font-weight: 700; }
 a { color: #7acbff; }
 @media (max-width: 1250px) { .main-grid { grid-template-columns: 270px minmax(370px, 1fr) 310px; } .panel { padding: 14px; } }
 @media (max-height: 760px) { .panel { max-height: calc(100vh - 110px); } }

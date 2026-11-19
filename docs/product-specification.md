@@ -4,13 +4,13 @@
 
 The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaoke tracks from audio stems and timed lyrics. It previews the result with the same lyric renderer used in The Proper Volume Karaoke Booth, then exports a video or a portable TPV kit.
 
-## Prototype 0.1.0
+## Prototype 0.2.0
 
 ### Implemented
 
 - Import multiple local audio files and label each as instrumental, lead, backing, or other; voice names are editable.
 - Preview synchronized stems with independent stem gain and master volume.
-- Paste lyrics and tap lyric-line starts during playback; cue start/end times are directly editable.
+- Paste lyrics and capture line or word starts during playback with the timing button or Spacebar; cue and word start/end times are directly editable.
 - Import and export the Studio lyrics JSON schema, Enhanced LRC word timestamps, and SRT line cues.
 - Render an MP4 with mixed audio, karaoke highlighting, and an optional still-image background through a configured local FFmpeg executable.
 - Export a ZIP-based TPV kit containing relative-path project metadata, lyrics, audio stems, and an optional original CD+G file.
@@ -19,7 +19,6 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 ### Not yet implemented
 
 - Open/reopen a TPV kit as an editable project, project autosave and recovery.
-- Manual word-by-word timing capture; imported Enhanced LRC word cues can be reviewed and exported.
 - Read CD+G graphics into a preview or editable lyric text, and generate CD+G output.
 - Import arbitrary JSON schemas; JSON lyric import currently expects the Studio schema.
 - Multiple separation providers, remote services, automatic lyric recognition/alignment, waveform editing, per-voice recording tools, and installer signing.

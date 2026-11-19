@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { KaraFunPlayer as KaraokePlayer, type KaraFunPlayerEvent as KaraokePlayerEvent, type KaraFunStemSource as KaraokeStemSource } from '../shared/from-booth/display/karafun-player';
 import { paintKaraFunLyrics } from '../shared/from-booth/display/karafun-lyrics';
-import { newLyricLines, toPortableKitProject, toRenderTiming, type LyricLine, type StudioProject, type StudioRole, type StudioStem } from '../domain/project';
+import { finishTimedWord, newLyricLines, recordTimedWordStart, seedTimedWords, timedWordCount, toPortableKitProject, toRenderTiming, type LyricLine, type StudioProject, type StudioRole, type StudioStem } from '../domain/project';
 import { parseLyricsFile, toAss, toLrc, toLyricsJson, toSrt } from '../domain/lyrics-formats';
 
 const roles: StudioRole[] = ['instrumental', 'lead', 'backing', 'other'];
@@ -21,13 +21,14 @@ async function mediaDuration(url: string): Promise<number> {
 
 export function App() {
   const player = useRef<KaraokePlayer | null>(null), generation = useRef('');
+  const timingRef = useRef(false), captureAction = useRef<() => void>(() => undefined);
   const canvas = useRef<HTMLCanvasElement | null>(null), stemRef = useRef<StudioStem[]>([]);
   const [stems, setStems] = useState<StudioStem[]>([]);
   const [lines, setLines] = useState<LyricLine[]>([]);
   const [title, setTitle] = useState(''), [artist, setArtist] = useState('');
   const [position, setPosition] = useState(0), [duration, setDuration] = useState(0);
   const [playing, setPlaying] = useState(false), [volume, setVolume] = useState(0.8);
-  const [lyricsDraft, setLyricsDraft] = useState(''), [nextLine, setNextLine] = useState(0), [timing, setTiming] = useState(false);
+  const [lyricsDraft, setLyricsDraft] = useState(''), [nextLine, setNextLine] = useState(0), [nextWord, setNextWord] = useState(0), [captureMode, setCaptureMode] = useState<'line' | 'word'>('line'), [timing, setTiming] = useState(false);
   const [status, setStatus] = useState('Create a project by importing audio stems.');
   const [error, setError] = useState('');
   const [settings, setSettings] = useState<StudioSettings>({ ffmpegPath: 'ffmpeg', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx' });
@@ -56,6 +57,11 @@ export function App() {
 
   useEffect(() => { stemRef.current = stems; }, [stems]);
   const renderTiming = useMemo(() => toRenderTiming(lines, duration), [lines, duration]);
+  const wordCount = useMemo(() => timedWordCount(lines), [lines]);
+  const wordOffsets = useMemo(() => {
+    let offset = 0;
+    return lines.map(line => { const current = offset; offset += line.words.length; return current; });
+  }, [lines]);
   useEffect(() => {
     const paint = () => {
       if (canvas.current) paintKaraFunLyrics(canvas.current, renderTiming, position, {
@@ -141,7 +147,14 @@ export function App() {
   };
   const beginTiming = async () => {
     if (!lines.length || !generation.current) { setError('Add lyrics and audio first.'); return; }
-    setNextLine(0); setTiming(true); seek(0);
+    setCaptureMode('line'); setNextLine(0); setTiming(true); seek(0);
+    try { await player.current?.play(generation.current); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  };
+  const beginWordTiming = async () => {
+    if (!lines.length || !generation.current) { setError('Add lyrics and audio first.'); return; }
+    const prepared = seedTimedWords(lines);
+    setLines(prepared); setCaptureMode('word'); setNextWord(0); setTiming(true); seek(0);
     try { await player.current?.play(generation.current); }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
@@ -156,11 +169,47 @@ export function App() {
     setNextLine(index => index + 1);
   };
   const finishTiming = () => {
+    if (captureMode === 'word' && nextWord > 0) setLines(current => finishTimedWord(current, nextWord - 1, position));
     const last = Math.max(0, nextLine - 1);
-    setLines(current => current.map((line, index) => index === last ? { ...line, endSeconds: Math.max(position, line.startSeconds + 0.1) } : line));
-    setTiming(false); setStatus('Line timing saved.');
+    if (captureMode === 'line') setLines(current => current.map((line, index) => index === last ? { ...line, endSeconds: Math.max(position, line.startSeconds + 0.1) } : line));
+    if (generation.current) player.current?.pause(generation.current);
+    setPlaying(false);
+    setTiming(false); setStatus('Lyric timing saved.');
   };
-  const updateLine = (id: string, patch: Partial<LyricLine>) => setLines(current => current.map(line => line.id === id ? { ...line, ...patch } : line));
+  const tapWord = () => {
+    if (nextWord >= wordCount) return;
+    setLines(current => recordTimedWordStart(current, nextWord, position));
+    setNextWord(index => index + 1);
+  };
+  const updateLine = (id: string, patch: Partial<LyricLine>) => setLines(current => current.map(line => {
+    if (line.id !== id) return line;
+    // Text edits invalidate word-level timing so it cannot silently describe old text.
+    return { ...line, ...patch, ...(patch.text !== undefined && patch.text !== line.text ? { words: [] } : {}) };
+  }));
+  const updateWord = (lineId: string, wordIndex: number, field: 'startSeconds' | 'endSeconds', value: number) => {
+    if (!Number.isFinite(value)) return;
+    setLines(current => current.map(line => {
+      if (line.id !== lineId || !line.words[wordIndex]) return line;
+      const words = line.words.slice(), word = words[wordIndex];
+      words[wordIndex] = field === 'startSeconds'
+        ? { ...word, startSeconds: Math.max(0, value), endSeconds: Math.max(value + 0.01, word.endSeconds) }
+        : { ...word, endSeconds: Math.max(word.startSeconds + 0.01, value) };
+      return { ...line, words, startSeconds: words[0].startSeconds, endSeconds: words.at(-1)!.endSeconds };
+    }));
+  };
+  const handleCaptureKey = useCallback((event: globalThis.KeyboardEvent) => {
+    if (!timingRef.current || event.code !== 'Space') return;
+    const target = event.target as HTMLElement;
+    if (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+    event.preventDefault();
+    captureAction.current();
+  }, []);
+  timingRef.current = timing;
+  captureAction.current = captureMode === 'word' ? tapWord : tapLine;
+  useEffect(() => {
+    window.addEventListener('keydown', handleCaptureKey);
+    return () => window.removeEventListener('keydown', handleCaptureKey);
+  }, [handleCaptureKey]);
   const importLyrics = async (file: File) => {
     if (file.name.toLowerCase().endsWith('.cdg')) {
       setCdgPath(window.studio.getPathForFile(file));
@@ -276,10 +325,11 @@ export function App() {
         <textarea rows={5} className="small-input" placeholder="Paste lyrics, one line per cue" value={lyricsDraft} onChange={event => setLyricsDraft(event.target.value)} />
         <div className="toolbar">
           <button className="accent" disabled={!lines.length || !generation.current || busy} onClick={() => void beginTiming()}>Start line timing</button>
-          {timing && <button className="primary" onClick={tapLine}>Tap next line · {nextLine + 1}/{lines.length}</button>}
+          <button disabled={!lines.length || !generation.current || busy} onClick={() => void beginWordTiming()}>Start word timing</button>
+          {timing && <button className="primary" onClick={captureMode === 'word' ? tapWord : tapLine}>{captureMode === 'word' ? `Tap next word · ${Math.min(nextWord + 1, wordCount)}/${wordCount}` : `Tap next line · ${Math.min(nextLine + 1, lines.length)}/${lines.length}`}</button>}
           {timing && <button onClick={finishTiming}>Finish timing</button>}
         </div>
-        <p className="muted">Play the song and tap once as each lyric line begins. Imported Enhanced LRC word timings are preserved.</p>
+        <p className="muted">Start playback, then tap the next line or word as it is sung. Spacebar also records a timing while this editor is active.</p>
       </section>
 
       <section className="panel preview-panel">
@@ -308,17 +358,27 @@ export function App() {
         <div className="section-title">Cue Sheet</div><h2>Manual timing</h2>
         <p className="muted">Adjust cue text and start/end points directly, or tap them during playback.</p>
         <div className="lyrics-list">
-          {lines.map((line, index) => <div className={'lyric-row ' + (timing && index === nextLine ? 'active' : '')} key={line.id}>
+          {lines.map((line, index) => <div className={'lyric-row ' + (timing && captureMode === 'line' && index === nextLine ? 'active' : '')} key={line.id}>
             <span className="time">{seconds(line.startSeconds)}</span>
             <input aria-label={'Lyric line ' + (index + 1)} value={line.text} onChange={event => updateLine(line.id, { text: event.target.value })} />
           </div>)}
           {!lines.length && <p className="muted">Import an LRC, SRT or JSON file, or paste lyrics in the left panel.</p>}
         </div>
         {lines.length > 0 && <div className="stack">
-          {lines.map((line, index) => <div className="row" key={line.id + '-times'}>
-            <span className="time">{String(index + 1).padStart(2, '0')}</span>
-            <input aria-label={'Line ' + (index + 1) + ' start'} type="number" min="0" step="0.01" value={line.startSeconds} onChange={event => updateLine(line.id, { startSeconds: Number(event.target.value) })} />
-            <input aria-label={'Line ' + (index + 1) + ' end'} type="number" min="0" step="0.01" value={line.endSeconds} onChange={event => updateLine(line.id, { endSeconds: Number(event.target.value) })} />
+          {lines.map((line, index) => <div className="cue-block" key={line.id + '-times'}>
+            <div className="row">
+              <span className="time">{String(index + 1).padStart(2, '0')}</span>
+              <input aria-label={'Line ' + (index + 1) + ' start'} type="number" min="0" step="0.01" value={line.startSeconds} onChange={event => updateLine(line.id, { startSeconds: Number(event.target.value) })} />
+              <input aria-label={'Line ' + (index + 1) + ' end'} type="number" min="0" step="0.01" value={line.endSeconds} onChange={event => updateLine(line.id, { endSeconds: Number(event.target.value) })} />
+            </div>
+            {line.words.length > 0 && <details className="word-cues">
+              <summary>Word timings · {line.words.length}</summary>
+              {line.words.map((word, wordIndex) => <div className={'row word-cue ' + (timing && captureMode === 'word' && wordOffsets[index] + wordIndex === nextWord ? 'active' : '')} key={wordIndex}>
+                <span className="word-label" title={word.text}>{word.text.trim() || ' '}</span>
+                <input aria-label={'Line ' + (index + 1) + ' word ' + (wordIndex + 1) + ' start'} type="number" min="0" step="0.01" value={word.startSeconds} onChange={event => updateWord(line.id, wordIndex, 'startSeconds', Number(event.target.value))} />
+                <input aria-label={'Line ' + (index + 1) + ' word ' + (wordIndex + 1) + ' end'} type="number" min="0" step="0.01" value={word.endSeconds} onChange={event => updateWord(line.id, wordIndex, 'endSeconds', Number(event.target.value))} />
+              </div>)}
+            </details>}
           </div>)}
         </div>}
         <div className="section-title" style={{ marginTop: 24 }}>Export</div>
@@ -334,7 +394,7 @@ export function App() {
         {error && <p className="error" role="alert">{error}</p>}
       </section>
     </main>
-    <footer className="footer"><span>Prototype 0.1.0 · Processing stays on this computer</span><span>TPV Kit · timed lyrics · local stems</span></footer>
+    <footer className="footer"><span>Prototype 0.2.0 · Processing stays on this computer</span><span>TPV Kit · timed lyrics · local stems</span></footer>
     {settingsOpen && <div className="settings" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
       <section className="settings-card" role="dialog" aria-modal="true" aria-labelledby="preferences-title">
         <div className="row spaced"><h2 id="preferences-title">Studio Preferences</h2><button onClick={() => setSettingsOpen(false)}>Close</button></div>
