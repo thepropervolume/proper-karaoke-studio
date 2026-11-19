@@ -17,7 +17,7 @@ protocol.registerSchemesAsPrivileged([{
 const media = new Map();
 const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.aiff', '.wma']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
-const defaultSettings = { ffmpegPath: 'ffmpeg', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx' };
+const defaultSettings = { ffmpegPath: 'ffmpeg', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx', lyricAlignerExecutable: process.platform === 'win32' ? 'python' : 'python3', alignmentLanguage: 'en' };
 let mainWindow;
 
 function text(input, field, max = 500) {
@@ -40,6 +40,8 @@ function loadSettings() {
       ffmpegPath: typeof value.ffmpegPath === 'string' ? value.ffmpegPath : defaultSettings.ffmpegPath,
       separatorExecutable: typeof value.separatorExecutable === 'string' ? value.separatorExecutable : defaultSettings.separatorExecutable,
       separatorModel: typeof value.separatorModel === 'string' ? value.separatorModel : defaultSettings.separatorModel,
+      lyricAlignerExecutable: typeof value.lyricAlignerExecutable === 'string' ? value.lyricAlignerExecutable : defaultSettings.lyricAlignerExecutable,
+      alignmentLanguage: typeof value.alignmentLanguage === 'string' ? value.alignmentLanguage : defaultSettings.alignmentLanguage,
     };
   } catch { return { ...defaultSettings }; }
 }
@@ -48,8 +50,11 @@ function saveSettings(value) {
     ffmpegPath: text(value?.ffmpegPath, 'FFmpeg executable', 4096).trim() || 'ffmpeg',
     separatorExecutable: text(value?.separatorExecutable, 'separator executable', 4096).trim() || 'audio-separator',
     separatorModel: text(value?.separatorModel, 'model name', 160).trim(),
+    lyricAlignerExecutable: text(value?.lyricAlignerExecutable, 'Python executable', 4096).trim() || defaultSettings.lyricAlignerExecutable,
+    alignmentLanguage: text(value?.alignmentLanguage, 'alignment language', 16).trim() || 'en',
   };
   if (!/^[\w.-]+$/.test(result.separatorModel)) throw new Error('Model names may contain letters, digits, dots, underscores, and hyphens.');
+  if (!/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/.test(result.alignmentLanguage)) throw new Error('Use a language code such as en, es, or fr.');
   require('node:fs').mkdirSync(app.getPath('userData'), { recursive: true });
   require('node:fs').writeFileSync(settingsPath(), JSON.stringify(result, null, 2) + '\n', { mode: 0o600 });
   return result;
@@ -184,6 +189,26 @@ app.whenReady().then(() => {
     const files = entries.filter(item => item.isFile() && AUDIO_EXTENSIONS.has(path.extname(item.name).toLowerCase())).map(item => path.join(outputDirectory, item.name));
     if (!files.length) throw new Error('Separation completed but produced no supported audio files.');
     return { files, outputDirectory };
+  });
+  ipcMain.handle('studio:align-lyrics', async (_event, input) => {
+    const source = await localFile(input?.audioPath, AUDIO_EXTENSIONS);
+    const executable = text(input?.executable, 'Python executable', 4096).trim();
+    const language = text(input?.language, 'alignment language', 16).trim();
+    const lyrics = input?.lyrics;
+    if (!executable || !/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/.test(language)) throw new Error('Configure a Python executable and valid language code in Preferences.');
+    if (!Array.isArray(lyrics) || !lyrics.length || lyrics.length > 500 || lyrics.some(line => typeof line !== 'string' || line.length > 2000) || JSON.stringify(lyrics).length > 256 * 1024) throw new Error('Provide up to 500 lyric lines (maximum 256 KB total).');
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tpv-align-'));
+    const inputPath = path.join(tempDir, 'lyrics.json'), outputPath = path.join(tempDir, 'aligned.json');
+    const scriptPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'scripts', 'align_lyrics.py')
+      : path.join(app.getAppPath(), 'scripts', 'align_lyrics.py');
+    try {
+      await fs.writeFile(inputPath, JSON.stringify({ lyrics }), 'utf8');
+      await spawnTool(executable, [scriptPath, '--audio', source, '--input', inputPath, '--output', outputPath, '--language', language], 'WhisperX lyric alignment');
+      const result = JSON.parse(await fs.readFile(outputPath, 'utf8'));
+      if (!Number.isFinite(result.duration) || !Array.isArray(result.words) || result.words.length > 10000) throw new Error('The alignment tool returned an invalid result.');
+      return result;
+    } finally { await fs.rm(tempDir, { recursive: true, force: true }); }
   });
   createWindow();
 });

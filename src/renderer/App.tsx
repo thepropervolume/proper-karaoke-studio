@@ -3,6 +3,7 @@ import { KaraFunPlayer as KaraokePlayer, type KaraFunPlayerEvent as KaraokePlaye
 import { paintKaraFunLyrics } from '../shared/from-booth/display/karafun-lyrics';
 import { finishTimedWord, newLyricLines, recordTimedWordStart, seedTimedWords, timedWordCount, toPortableKitProject, toRenderTiming, type LyricLine, type StudioProject, type StudioRole, type StudioStem } from '../domain/project';
 import { parseLyricsFile, toAss, toLrc, toLyricsJson, toSrt } from '../domain/lyrics-formats';
+import { applyForcedAlignment } from '../domain/forced-alignment';
 
 const roles: StudioRole[] = ['instrumental', 'lead', 'backing', 'other'];
 const allAudible = { instrumental: 1, lead: 1, backing: 1, other: 1 } as const;
@@ -22,8 +23,10 @@ async function mediaDuration(url: string): Promise<number> {
 export function App() {
   const player = useRef<KaraokePlayer | null>(null), generation = useRef('');
   const timingRef = useRef(false), captureAction = useRef<() => void>(() => undefined);
+  const linesRef = useRef<LyricLine[]>([]);
   const canvas = useRef<HTMLCanvasElement | null>(null), stemRef = useRef<StudioStem[]>([]);
   const [stems, setStems] = useState<StudioStem[]>([]);
+  const [alignmentStemId, setAlignmentStemId] = useState('');
   const [lines, setLines] = useState<LyricLine[]>([]);
   const [title, setTitle] = useState(''), [artist, setArtist] = useState('');
   const [position, setPosition] = useState(0), [duration, setDuration] = useState(0);
@@ -31,7 +34,10 @@ export function App() {
   const [lyricsDraft, setLyricsDraft] = useState(''), [nextLine, setNextLine] = useState(0), [nextWord, setNextWord] = useState(0), [captureMode, setCaptureMode] = useState<'line' | 'word'>('line'), [timing, setTiming] = useState(false);
   const [status, setStatus] = useState('Create a project by importing audio stems.');
   const [error, setError] = useState('');
-  const [settings, setSettings] = useState<StudioSettings>({ ffmpegPath: 'ffmpeg', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx' });
+  const [settings, setSettings] = useState<StudioSettings>({
+    ffmpegPath: 'ffmpeg', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx',
+    lyricAlignerExecutable: 'python', alignmentLanguage: 'en',
+  });
   const [settingsOpen, setSettingsOpen] = useState(false), [busy, setBusy] = useState(false);
   const [cdgPath, setCdgPath] = useState<string | null>(null);
   const [background, setBackground] = useState<{ url: string; path: string } | null>(null);
@@ -56,6 +62,7 @@ export function App() {
   }, []);
 
   useEffect(() => { stemRef.current = stems; }, [stems]);
+  useEffect(() => { linesRef.current = lines; }, [lines]);
   const renderTiming = useMemo(() => toRenderTiming(lines, duration), [lines, duration]);
   const wordCount = useMemo(() => timedWordCount(lines), [lines]);
   const wordOffsets = useMemo(() => {
@@ -80,6 +87,7 @@ export function App() {
     const id = crypto.randomUUID();
     generation.current = id;
     setStems(next);
+    setAlignmentStemId(current => next.some(stem => stem.id === current) ? current : (next.find(stem => stem.role === 'lead') || next[0]).id);
     const songDuration = Math.max(...next.map(item => item.durationSeconds));
     setDuration(songDuration); setPosition(0);
     const inputs: KaraokeStemSource[] = next.map((stem, index) => ({ id: index + 1, role: stem.role, voice: stem.voice || stem.name, src: stem.url }));
@@ -157,6 +165,27 @@ export function App() {
     setLines(prepared); setCaptureMode('word'); setNextWord(0); setTiming(true); seek(0);
     try { await player.current?.play(generation.current); }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  };
+  const alignLyrics = async () => {
+    const source = stems.find(stem => stem.id === alignmentStemId);
+    if (!source?.path) { setError('Choose an audio file with a local path for lyric synchronization.'); return; }
+    if (!lines.length) { setError('Add or import the lyrics before synchronizing.'); return; }
+    const lyricsAtStart = JSON.stringify(lines);
+    setBusy(true); setError(''); setStatus('Aligning the supplied lyrics to audio locally. The first run downloads the alignment model…');
+    try {
+      const result = await window.studio.alignLyrics({
+        audioPath: source.path, executable: settings.lyricAlignerExecutable,
+        language: settings.alignmentLanguage, lyrics: lines.map(line => line.text),
+      });
+      if (JSON.stringify(linesRef.current) !== lyricsAtStart) throw new Error('The lyric cues changed while synchronization was running. The new timings were discarded; run synchronization again.');
+      const alignedLines = applyForcedAlignment(lines, result.words, Math.max(duration, result.duration));
+      setLines(alignedLines);
+      setDuration(Math.max(duration, result.duration));
+      setStatus(`Synchronized ${result.words.length} supplied lyric words. Review the cues and adjust any mismatches.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setStatus('Lyric synchronization did not finish. Existing lyric text and timing were kept.');
+    } finally { setBusy(false); }
   };
   const tapLine = () => {
     if (nextLine >= lines.length) return;
@@ -326,9 +355,16 @@ export function App() {
         <div className="toolbar">
           <button className="accent" disabled={!lines.length || !generation.current || busy} onClick={() => void beginTiming()}>Start line timing</button>
           <button disabled={!lines.length || !generation.current || busy} onClick={() => void beginWordTiming()}>Start word timing</button>
+          <button className="primary" disabled={!lines.length || !stems.some(stem => stem.path) || busy} onClick={() => void alignLyrics()}>Sync supplied lyrics with AI</button>
           {timing && <button className="primary" onClick={captureMode === 'word' ? tapWord : tapLine}>{captureMode === 'word' ? `Tap next word · ${Math.min(nextWord + 1, wordCount)}/${wordCount}` : `Tap next line · ${Math.min(nextLine + 1, lines.length)}/${lines.length}`}</button>}
           {timing && <button onClick={finishTiming}>Finish timing</button>}
         </div>
+        <label className="field-label">Audio for synchronization
+          <select value={alignmentStemId} onChange={event => setAlignmentStemId(event.target.value)} disabled={!stems.length}>
+            {stems.filter(stem => stem.path).map(stem => <option key={stem.id} value={stem.id}>{stem.name}{stem.role === 'lead' ? ' · lead vocal' : ''}</option>)}
+          </select>
+        </label>
+        <p className="muted">Aligns the lyrics you supplied to this audio. It does not identify, transcribe, or change lyrics. Best results usually come from a clear vocal track.</p>
         <p className="muted">Start playback, then tap the next line or word as it is sung. Spacebar also records a timing while this editor is active.</p>
       </section>
 
@@ -394,18 +430,21 @@ export function App() {
         {error && <p className="error" role="alert">{error}</p>}
       </section>
     </main>
-    <footer className="footer"><span>Prototype 0.2.0 · Processing stays on this computer</span><span>TPV Kit · timed lyrics · local stems</span></footer>
+    <footer className="footer"><span>Prototype 0.3.0 · Processing stays on this computer</span><span>TPV Kit · timed lyrics · local stems</span></footer>
     {settingsOpen && <div className="settings" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
       <section className="settings-card" role="dialog" aria-modal="true" aria-labelledby="preferences-title">
         <div className="row spaced"><h2 id="preferences-title">Studio Preferences</h2><button onClick={() => setSettingsOpen(false)}>Close</button></div>
-        <p className="muted">Choose the local tools used to render video and separate stems.</p>
+        <p className="muted">Choose the local tools used to render video, separate stems, and align supplied lyrics.</p>
         <div className="stack">
           <label className="field-label">FFmpeg executable<input value={settings.ffmpegPath} onChange={event => setSettings({ ...settings, ffmpegPath: event.target.value })} /></label>
           <label className="field-label">Stem separation executable<input value={settings.separatorExecutable} onChange={event => setSettings({ ...settings, separatorExecutable: event.target.value })} /></label>
           <label className="field-label">UVR / Audio Separator model<input value={settings.separatorModel} onChange={event => setSettings({ ...settings, separatorModel: event.target.value })} /></label>
+          <label className="field-label">Lyric alignment Python executable<input value={settings.lyricAlignerExecutable} onChange={event => setSettings({ ...settings, lyricAlignerExecutable: event.target.value })} /><span className="muted">Use Python 3.10–3.13; a full path is supported.</span></label>
+          <label className="field-label">Lyric language code (for example, en)<input value={settings.alignmentLanguage} onChange={event => setSettings({ ...settings, alignmentLanguage: event.target.value })} /></label>
           <p className="muted">Default: Audio Separator with a UVR MDX model. Install it locally; Audio Separator downloads its selected model on first use.</p>
+          <p className="muted">AI lyric synchronization uses local WhisperX forced alignment. Install in the selected Python 3.10–3.13 environment with <code>python -m pip install whisperx</code>; the first run downloads its language model. Audio and lyric text stay on this computer.</p>
         </div>
-        <div className="row spaced"><a href="https://github.com/nomadkaraoke/python-audio-separator" target="_blank" rel="noreferrer">Audio Separator setup</a><button className="primary" onClick={() => void saveSettings()}>Save Preferences</button></div>
+        <div className="row spaced"><div className="toolbar"><a href="https://github.com/nomadkaraoke/python-audio-separator" target="_blank" rel="noreferrer">Audio Separator setup</a><a href="https://github.com/m-bain/whisperX" target="_blank" rel="noreferrer">WhisperX setup</a></div><button className="primary" onClick={() => void saveSettings()}>Save Preferences</button></div>
       </section>
     </div>}
   </div>;

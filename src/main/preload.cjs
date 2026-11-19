@@ -10,4 +10,5 @@ contextBridge.exposeInMainWorld('studio', {
   exportKit: input => ipcRenderer.invoke('studio:export-kit', input),
   exportVideo: input => ipcRenderer.invoke('studio:export-video', input),
   separate: input => ipcRenderer.invoke('studio:separate', input),
+  alignLyrics: input => ipcRenderer.invoke('studio:align-lyrics', input),
 });
