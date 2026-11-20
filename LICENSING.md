@@ -4,7 +4,9 @@ The Proper Volume licenses its original Karaoke Studio source code, build script
 
 > This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-Existing third-party and contributor notices retain their terms. The bundled Liberation fonts retain their [SIL Open Font License](public/lyric-fonts/LICENSE). Preserve the applicable dependency and runtime notices, including the Electron and Chromium notices. The separate `@thepropervolume/karaoke-core` dependency retains its own terms. This license grants no redistribution rights to the private Core archive in `vendor/`.
+Existing third-party and contributor notices retain their terms. The bundled Liberation fonts retain their [SIL Open Font License](public/lyric-fonts/LICENSE). Preserve the applicable dependency and runtime notices, including the Electron and Chromium notices.
+
+The vendored `@thepropervolume/karaoke-core` package is licensed separately under MPL 2.0. The pinned archive includes the TypeScript corresponding to the six compiled JavaScript and declaration files. The [Core licensing notice](https://github.com/thepropervolume/proper-karaoke-core/blob/main/LICENSING.md) also covers the exact source for Core v0.1.0, which earlier Studio revisions bundled.
 
 TPV names, logos, and branded artwork are handled under the [branding terms](TRADEMARKS.md). The software license grants no redistribution rights to user-supplied recordings, lyrics, externally installed model weights, or provider materials.
 

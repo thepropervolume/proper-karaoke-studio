@@ -2,11 +2,11 @@
 
 ## Current integration
 
-Studio uses the lyric cue and word timing types plus LRC and SRT format adapters from [Proper Karaoke Core 0.1.0](https://github.com/thepropervolume/proper-karaoke-core/releases/tag/v0.1.0). The versioned npm tarball and its SHA-256 checksum are pinned in the Studio vendor directory. A clean npm install uses the package from this checkout without registry credentials.
+Studio uses the lyric cue and word timing types plus LRC and SRT format adapters from [Proper Karaoke Core 0.1.1](https://github.com/thepropervolume/proper-karaoke-core). The versioned npm tarball and its SHA-256 checksum are pinned in the Studio vendor directory. The archive includes its MPL 2.0 notice and corresponding TypeScript source. A clean npm install uses the package from this checkout without registry credentials.
 
 Enhanced LRC imports preserve closing timestamps, and outputs include the closing marker for the last word. Studio still owns its project JSON, ASS formatting for MP4 and CD+G, waveform edits, and TPV kits.
 
-To update Core, download the tarball and SHA256SUMS.txt from its private release. Verify the checksum, replace the previous version in vendor, and install the new tarball with npm install --save-exact. Commit the tarball, checksum, manifest, and lockfile together. Run npm ci, npm run build, and npm test from the Studio checkout.
+To update Core, download the tarball and SHA256SUMS.txt from its release or build it from the pinned Core source with npm pack. Verify or record the checksum, replace the previous version in vendor, and install the new tarball with npm install --save-exact. Commit the tarball, checksum, manifest, and lockfile together. Run npm ci, npm run build, and npm test from the Studio checkout.
 
 ## Move into core
 

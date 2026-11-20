@@ -57,7 +57,7 @@ A TPV kit is a ZIP archive containing manifest.json, lyrics/lyrics.json, lyrics/
 
 ## Shared-code boundary
 
-Studio uses Karaoke Core 0.1.0 for provider-neutral timing and LRC/SRT interchange. Studio currently pins a copy of Booth's Web Audio player and canvas lyric renderer. The shared package can absorb provider-neutral audio and rendering interfaces once both apps can consume them. Application shells, providers, project files, and packaging belong in the respective apps.
+Studio uses Karaoke Core 0.1.1 for provider-neutral timing and LRC/SRT interchange. Studio currently pins a copy of Booth's Web Audio player and canvas lyric renderer. The shared package can absorb provider-neutral audio and rendering interfaces once both apps can consume them. Application shells, providers, project files, and packaging belong in the respective apps.
 
 ## AI lyric synchronization
 
