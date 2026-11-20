@@ -7,6 +7,26 @@ import sys
 from pathlib import Path
 
 
+def decode_audio(source):
+    """Return mono, 16 kHz PCM using the FFmpeg libraries bundled with PyAV."""
+    import av
+    import numpy as np
+
+    resampler = av.AudioResampler(format="fltp", layout="mono", rate=16000)
+    pcm = bytearray()
+    with av.open(source, mode="r") as container:
+        if not container.streams.audio:
+            raise ValueError("The selected file contains no readable audio stream.")
+        for frame in container.decode(audio=0):
+            for block in resampler.resample(frame):
+                pcm.extend(block.to_ndarray().tobytes())
+            if len(pcm) > 16000 * 4 * 3600:
+                raise ValueError("Choose an audio track one hour or shorter.")
+        for block in resampler.resample(None):
+            pcm.extend(block.to_ndarray().tobytes())
+    return np.frombuffer(pcm, dtype=np.float32)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--audio", required=True)
@@ -18,7 +38,7 @@ def main() -> int:
     if not re.fullmatch(r"[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?", args.language):
         raise ValueError("Use a language code such as en, es, or fr.")
     if sys.version_info < (3, 10) or sys.version_info >= (3, 14):
-        raise RuntimeError(f"WhisperX requires Python 3.10–3.13; the configured interpreter is {sys.version.split()[0]}. Set its full path in Studio Preferences.")
+        raise RuntimeError(f"This external Python is {sys.version.split()[0]}. WhisperX requires Python 3.10–3.13. Use Studio’s managed lyric setup or a compatible external environment.")
     request = json.loads(Path(args.input).read_text(encoding="utf-8"))
     lyrics = request.get("lyrics")
     if not isinstance(lyrics, list) or not lyrics or not all(isinstance(line, str) and line.strip() for line in lyrics):
@@ -28,10 +48,11 @@ def main() -> int:
         import torch
         import whisperx
     except ImportError as exc:
-        raise RuntimeError("WhisperX is not installed. Install it locally with: python -m pip install whisperx") from exc
+        raise RuntimeError("WhisperX could not load in this environment. Try again with Studio’s managed lyric setup.") from exc
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    audio = whisperx.load_audio(args.audio)
+    # PyAV ships its own decoder, so alignment can read a song without a system FFmpeg command.
+    audio = decode_audio(args.audio)
     duration = len(audio) / 16000
     if duration <= 0:
         raise ValueError("The selected audio contains no readable samples.")
