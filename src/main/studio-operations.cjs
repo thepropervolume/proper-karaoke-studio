@@ -1,0 +1,187 @@
+const { spawn } = require('node:child_process');
+const { randomUUID } = require('node:crypto');
+const { constants, createWriteStream, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } = require('node:fs');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const { pipeline } = require('node:stream/promises');
+const yazl = require('yazl');
+
+const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.aiff', '.wma']);
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+const defaultSettings = { ffmpegPath: 'ffmpeg', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx', lyricAlignerExecutable: process.platform === 'win32' ? 'python' : 'python3', alignmentLanguage: 'en' };
+
+function text(input, field, max = 500) {
+  if (typeof input !== 'string' || input.length > max) throw new Error('Invalid ' + field + '.');
+  return input;
+}
+async function localFile(value, extensions) {
+  const supplied = text(value, 'file path', 8192);
+  if (!path.isAbsolute(supplied)) throw new Error('An absolute local file path is required.');
+  const file = path.resolve(supplied), info = await fs.stat(file);
+  if (!info.isFile() || info.size === 0) throw new Error('The selected file is empty or unavailable.');
+  if (extensions && !extensions.has(path.extname(file).toLowerCase())) throw new Error('The selected file type is not supported.');
+  return file;
+}
+function loadSettings(file) {
+  try {
+    const value = JSON.parse(readFileSync(file, 'utf8'));
+    return {
+      ffmpegPath: typeof value.ffmpegPath === 'string' ? value.ffmpegPath : defaultSettings.ffmpegPath,
+      separatorExecutable: typeof value.separatorExecutable === 'string' ? value.separatorExecutable : defaultSettings.separatorExecutable,
+      separatorModel: typeof value.separatorModel === 'string' ? value.separatorModel : defaultSettings.separatorModel,
+      lyricAlignerExecutable: typeof value.lyricAlignerExecutable === 'string' ? value.lyricAlignerExecutable : defaultSettings.lyricAlignerExecutable,
+      alignmentLanguage: typeof value.alignmentLanguage === 'string' ? value.alignmentLanguage : defaultSettings.alignmentLanguage,
+    };
+  } catch { return { ...defaultSettings }; }
+}
+function saveSettings(file, value) {
+  const result = {
+    ffmpegPath: text(value?.ffmpegPath, 'FFmpeg executable', 4096).trim() || 'ffmpeg',
+    separatorExecutable: text(value?.separatorExecutable, 'separator executable', 4096).trim() || 'audio-separator',
+    separatorModel: text(value?.separatorModel, 'model name', 160).trim(),
+    lyricAlignerExecutable: text(value?.lyricAlignerExecutable, 'Python executable', 4096).trim() || defaultSettings.lyricAlignerExecutable,
+    alignmentLanguage: text(value?.alignmentLanguage, 'alignment language', 16).trim() || 'en',
+  };
+  if (!/^[\w.-]+$/.test(result.separatorModel)) throw new Error('Model names may contain letters, digits, dots, underscores, and hyphens.');
+  if (!/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/.test(result.alignmentLanguage)) throw new Error('Use a language code such as en, es, or fr.');
+  mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = file + '.' + randomUUID() + '.tmp';
+  try {
+    writeFileSync(temporary, JSON.stringify(result, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+    renameSync(temporary, file);
+  } finally { rmSync(temporary, { force: true }); }
+  return result;
+}
+
+function runTool(executable, args, label, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, args, { cwd: options.cwd, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-12000); });
+    child.once('error', error => reject(new Error('Could not start ' + label + ' (' + error.message + '). Check its executable in Preferences.')));
+    child.once('close', (code, signal) => resolve({ code, signal, stderr }));
+  });
+}
+
+async function spawnTool(executable, args, label, options) {
+  const result = await runTool(executable, args, label, options);
+  if (result.code !== 0) throw new Error(label + ' failed (' + (result.signal || result.code) + '): ' + result.stderr.slice(-2400));
+}
+
+async function probeAudio(file, ffmpegPath = defaultSettings.ffmpegPath) {
+  const source = await localFile(file, AUDIO_EXTENSIONS);
+  const { code, stderr } = await runTool(ffmpegPath, [
+    '-hide_banner', '-nostdin', '-i', source, '-map', '0:a:0', '-c:a', 'copy', '-t', '0', '-f', 'null', '-',
+  ], 'FFmpeg');
+  const duration = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(stderr);
+  if (code !== 0 || !duration) throw new Error('Could not read the audio duration for ' + path.basename(file) + '. Check FFmpeg or provide --duration.');
+  const seconds = Number(duration[1]) * 3600 + Number(duration[2]) * 60 + Number(duration[3]);
+  if (seconds <= 0) throw new Error('The audio has no readable duration. Provide --duration.');
+  return seconds;
+}
+
+// Finish writing next to the destination before publishing the result.
+async function writeOutput(destination, overwrite, write) {
+  const temporaryDirectory = await fs.mkdtemp(path.join(path.dirname(destination), '.tpv-export-'));
+  const temporaryFile = path.join(temporaryDirectory, path.basename(destination));
+  try {
+    await write(temporaryFile);
+    if (overwrite) await fs.rename(temporaryFile, destination);
+    else {
+      try {
+        await fs.link(temporaryFile, destination);
+      } catch (error) {
+        if (!['ENOTSUP', 'EPERM', 'EOPNOTSUPP'].includes(error.code)) throw error;
+        await fs.copyFile(temporaryFile, destination, constants.COPYFILE_EXCL);
+      }
+    }
+    return destination;
+  } finally { await fs.rm(temporaryDirectory, { recursive: true, force: true }); }
+}
+
+async function exportKit(input, destination, overwrite = true) {
+  if (!input || !Array.isArray(input.stems) || input.stems.length > 24 || !input.lyrics || typeof input.lyrics !== 'object') throw new Error('Invalid TPV kit project.');
+  const manifest = text(input.manifest, 'kit manifest', 2 * 1024 * 1024);
+  const stems = [];
+  for (const stem of input.stems) stems.push({ path: await localFile(stem.path, AUDIO_EXTENSIONS), name: text(stem.name, 'stem name', 300) });
+  const cdg = input.cdgPath ? await localFile(input.cdgPath, new Set(['.cdg'])) : null;
+  const lyricEntries = Object.entries(input.lyrics);
+  if (lyricEntries.some(([name]) => !['lyrics.json', 'lyrics.enhanced.lrc', 'lyrics.srt'].includes(name))) throw new Error('Unexpected kit lyrics file.');
+  return writeOutput(destination, overwrite, async temporaryFile => {
+    const zip = new yazl.ZipFile();
+    zip.on('error', error => zip.outputStream.destroy(error));
+    zip.addBuffer(Buffer.from(manifest), 'manifest.json');
+    for (const [name, contents] of lyricEntries) zip.addBuffer(Buffer.from(text(contents, 'kit lyrics', 4 * 1024 * 1024)), 'lyrics/' + name);
+    stems.forEach((stem, index) => {
+      const filename = path.basename(stem.path).replace(/[^\p{L}\p{N}._ -]/gu, '_').slice(0, 140) || 'stem.wav';
+      zip.addFile(stem.path, 'stems/' + String(index + 1).padStart(2, '0') + '-' + filename);
+    });
+    if (cdg) zip.addFile(cdg, 'source/' + path.basename(cdg).replace(/[^\p{L}\p{N}._ -]/gu, '_'));
+    zip.end();
+    await pipeline(zip.outputStream, createWriteStream(temporaryFile));
+  });
+}
+
+async function exportVideo(input, destination, overwrite = true) {
+  if (!input || !Array.isArray(input.stems) || !input.stems.length || input.stems.length > 24) throw new Error('Add at least one audio stem before exporting a video.');
+  const duration = Number(input.duration);
+  if (!Number.isFinite(duration) || duration <= 0 || duration > 3600) throw new Error('The project duration is invalid.');
+  const ffmpeg = text(input.ffmpegPath, 'FFmpeg executable', 4096).trim() || 'ffmpeg';
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tpv-studio-'));
+  const assPath = path.join(tempDir, 'lyrics.ass');
+  try {
+    await fs.writeFile(assPath, text(input.ass, 'subtitle data', 8 * 1024 * 1024), 'utf8');
+    const args = ['-y'];
+    if (input.backgroundPath) args.push('-loop', '1', '-framerate', '30', '-i', await localFile(input.backgroundPath, IMAGE_EXTENSIONS));
+    else args.push('-f', 'lavfi', '-i', 'color=c=0x171226:s=1920x1080:r=30:d=' + duration);
+    const stems = [];
+    for (const stem of input.stems) {
+      const file = await localFile(stem.path, AUDIO_EXTENSIONS);
+      args.push('-i', file);
+      stems.push({ volume: Math.max(0, Math.min(2, Number(stem.volume) || 0)) });
+    }
+    const filters = ['[0:v]subtitles=filename=lyrics.ass[v]'];
+    stems.forEach((stem, index) => filters.push('[' + (index + 1) + ':a]volume=' + stem.volume + '[a' + index + ']'));
+    filters.push(stems.map((_stem, index) => '[a' + index + ']').join('') + 'amix=inputs=' + stems.length + ':normalize=0:duration=longest,alimiter=limit=0.95[mix]');
+    args.push('-filter_complex', filters.join(';'), '-map', '[v]', '-map', '[mix]', '-t', String(duration),
+      '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k',
+      '-movflags', '+faststart', '-metadata', 'title=' + text(input.title, 'song title', 300),
+      '-metadata', 'artist=' + text(input.artist, 'song artist', 300), '-f', 'mp4');
+    const executable = /[\\/]/.test(ffmpeg) ? path.resolve(ffmpeg) : ffmpeg;
+    return await writeOutput(destination, overwrite, temporaryFile => spawnTool(executable, [...args, temporaryFile], 'FFmpeg', { cwd: tempDir }));
+  } finally { await fs.rm(tempDir, { recursive: true, force: true }); }
+}
+
+async function separate(input, directory) {
+  const source = await localFile(input?.sourcePath, AUDIO_EXTENSIONS);
+  const executable = text(input?.executable, 'separator executable', 4096).trim();
+  const model = text(input?.model, 'separator model', 160).trim();
+  if (!executable || !/^[\w.-]+$/.test(model)) throw new Error('Configure a valid executable and model name in Preferences.');
+  const outputDirectory = await fs.mkdtemp(path.join(directory, 'tpv-separated-'));
+  await spawnTool(executable, [source, '--model_filename', model, '--output_dir', outputDirectory], 'Audio Separator');
+  const entries = await fs.readdir(outputDirectory, { withFileTypes: true });
+  const files = entries.filter(item => item.isFile() && AUDIO_EXTENSIONS.has(path.extname(item.name).toLowerCase())).map(item => path.join(outputDirectory, item.name));
+  if (!files.length) throw new Error('Separation completed but produced no supported audio files.');
+  return { files, outputDirectory };
+}
+
+async function alignLyrics(input, scriptPath) {
+  const source = await localFile(input?.audioPath, AUDIO_EXTENSIONS);
+  const executable = text(input?.executable, 'Python executable', 4096).trim();
+  const language = text(input?.language, 'alignment language', 16).trim();
+  const lyrics = input?.lyrics;
+  if (!executable || !/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/.test(language)) throw new Error('Configure a Python executable and valid language code in Preferences.');
+  if (!Array.isArray(lyrics) || !lyrics.length || lyrics.length > 500 || lyrics.some(line => typeof line !== 'string' || line.length > 2000) || JSON.stringify(lyrics).length > 256 * 1024) throw new Error('Provide up to 500 lyric lines (maximum 256 KB total).');
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tpv-align-'));
+  const inputPath = path.join(tempDir, 'lyrics.json'), outputPath = path.join(tempDir, 'aligned.json');
+  try {
+    await fs.writeFile(inputPath, JSON.stringify({ lyrics }), 'utf8');
+    await spawnTool(executable, [scriptPath, '--audio', source, '--input', inputPath, '--output', outputPath, '--language', language], 'WhisperX lyric alignment');
+    const result = JSON.parse(await fs.readFile(outputPath, 'utf8'));
+    if (!Number.isFinite(result.duration) || !Array.isArray(result.words) || result.words.length > 10000) throw new Error('The alignment tool returned an invalid result.');
+    return result;
+  } finally { await fs.rm(tempDir, { recursive: true, force: true }); }
+}
+
+module.exports = { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, defaultSettings, text, localFile, loadSettings, saveSettings, exportKit, exportVideo, separate, alignLyrics, probeAudio, writeOutput };

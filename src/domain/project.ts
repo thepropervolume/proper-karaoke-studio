@@ -8,6 +8,7 @@ export type StudioStem = {
 export type StudioProject = {
   schema: 'com.thepropervolume.karaoke-studio'; version: 1; title: string; artist: string;
   durationSeconds: number; stems: Omit<StudioStem, 'file' | 'url'>[]; lyrics: LyricLine[]; importedCdg?: string | null;
+  backgroundPath?: string | null;
 };
 
 export function newLyricLines(text: string, duration: number): LyricLine[] {
@@ -106,8 +107,9 @@ function archiveName(sourcePath: string): string {
 // Strip host-local paths from the portable manifest and align each path with
 // the corresponding entry name that the streaming ZIP writer creates.
 export function toPortableKitProject(project: StudioProject): StudioProject {
+  const { backgroundPath: _localBackground, ...portable } = project;
   return {
-    ...project,
+    ...portable,
     stems: project.stems.map((stem, index) => ({
       ...stem,
       path: 'stems/' + String(index + 1).padStart(2, '0') + '-' + archiveName(stem.path),
