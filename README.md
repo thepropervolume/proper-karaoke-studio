@@ -22,3 +22,7 @@ Requires Node.js 24 or newer. FFmpeg is needed for CLI audio probing and MP4 exp
     npm run cli -- --help
 
 See the [CLI guide](docs/cli.md), [product specification](docs/product-specification.md), and [lyric synchronization setup](docs/lyric-synchronization.md).
+
+## License
+
+The Proper Volume’s original Studio software is licensed under [MPL 2.0](LICENSE). See [licensing scope](LICENSING.md) and the separate [branding terms](TRADEMARKS.md).
