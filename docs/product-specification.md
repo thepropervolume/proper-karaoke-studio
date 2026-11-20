@@ -4,7 +4,7 @@
 
 The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaoke tracks from audio stems and timed lyrics. It previews the result with the same lyric renderer used in The Proper Volume Karaoke Booth, then exports a video or a portable TPV kit.
 
-## Prototype 0.7.0
+## Prototype 0.8.0
 
 ### Implemented
 
@@ -20,7 +20,8 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 - Import and preview original CD+G graphics with local audio, render them to MP4, and author new CD+G graphics from timed cues. [CD+G workflow](cdg.md)
 - Export a ZIP-based TPV kit containing relative-path project metadata, lyrics, audio stems, and an optional original CD+G file.
 - Reopen a TPV kit from **Open Project** or the CLI. Studio creates an editable project with its own adjacent media folder and preserves its cue and stem settings.
-- Choose Audio Separator with a UVR model or Demucs with a supported model. Both run locally.
+- Choose a stem-separation model from a dropdown for Audio Separator (UVR), Demucs, or Dango AI. Local tools report available models when supported.
+- Manage encrypted third-party credentials from Preferences. Dango verifies developer credentials and processes audio in the cloud after explicit confirmation. Custom entries store credentials for services that may receive adapters in the future.
 - Record a microphone take, audition the take, and save it as a labeled local WAV stem from the [desktop editor](voice-recording.md).
 - Open and save editable Studio projects in one shared file format for the desktop editor and CLI.
 - Keep local snapshots of unsaved desktop edits and pending lyric text. [Project recovery](project-recovery.md) restores these snapshots after reopening Studio.
@@ -37,7 +38,7 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 
 ## Audio separation design
 
-Studio runs the selected local separator executable with its configured model. Audio Separator supports UVR models. Demucs defaults to htdemucs for vocals, bass, drums and other instruments. The packages leave Python, model weights and accelerator libraries to the selected local tool.
+Studio runs the configured local separator or makes an approved Dango AI cloud request. Audio Separator supports UVR models. Demucs defaults to htdemucs for vocals, bass, drums and other instruments. The chosen local separator manages its own model weights and accelerator libraries. [Stem separation guide](audio-separation.md)
 
 ## Project and kit format
 
@@ -60,8 +61,6 @@ Studio uses Karaoke Core 0.1.0 for provider-neutral timing and LRC/SRT interchan
 
 The user supplies and edits lyric text first. Studio sends that text and a chosen local audio file to a small Python adapter, which calls WhisperX's forced-alignment API directly. It does not call WhisperX transcription or use an ASR model to find lyrics. Alignment runs locally; the selected language model is downloaded by WhisperX on first use. The app retains the original lyric strings and line breaks, attaches aligned word timestamps, and leaves the prior timing untouched if alignment fails or the returned words do not match the supplied text.
 
-WhisperX's acoustic alignment models are designed for speech rather than singing. For the most useful first pass, select a clear lead-vocal source; manually review and correct the result in the cue sheet. Install the optional dependency with `python -m pip install whisperx` using Python 3.10–3.13. The Python executable and language code are configurable in Preferences. GPU acceleration is used when CUDA is available; otherwise alignment runs on CPU.
-
-This feature requires a separate local WhisperX install and downloads language-specific alignment weights on first use.
+Choose a supported language in Preferences and review the result in the cue sheet. A clear lead vocal often aligns better than a full mix. Studio and the CLI share a private CPU runtime with a pinned Python and WhisperX. Studio installs it on demand on Windows x64, Linux x64 and Apple silicon Mac. The first sync in each language downloads the corresponding alignment model. [AI Sync guide](lyric-synchronization.md)
 
 The Windows smoke test ran the actual CPU model against a generated voice recording with a 1.5-second lead-in and placed all nine supplied words. Full-song timing quality across vocal styles and languages still needs review.
