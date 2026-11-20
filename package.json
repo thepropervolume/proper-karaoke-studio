@@ -36,6 +36,10 @@
     ],
     "extraResources": [
       {
+        "from": "dist-electron/licenses",
+        "to": "licenses"
+      },
+      {
         "from": "scripts/align_lyrics.py",
         "to": "scripts/align_lyrics.py"
       },
