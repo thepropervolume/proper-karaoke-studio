@@ -4,7 +4,7 @@
 
 The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaoke tracks from audio stems and timed lyrics. It previews the result with the same lyric renderer used in The Proper Volume Karaoke Booth, then exports a video or a portable TPV kit.
 
-## Prototype 0.5.0
+## Prototype 0.6.0
 
 ### Implemented
 
@@ -14,11 +14,13 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 - Scrub through a zoomable waveform and move a selected lyric cue to the playhead while retaining its word timing offsets.
 - Force-align supplied lyrics to a selected local audio track with WhisperX. The alignment path does not run speech recognition, generate lyrics, or change supplied text; exact lyric words and line breaks are retained while timings are added.
 - Import and export the Studio lyrics JSON schema, Enhanced LRC word timestamps, and SRT line cues.
+- Map external timed lyric JSON through explicit JSON Pointer paths and time units in the [CLI](json-lyric-import.md).
 - Render an MP4 with mixed audio, karaoke highlighting, and an optional still-image background through a configured local FFmpeg executable.
 - Import and preview original CD+G graphics with local audio, render them to MP4, and author new CD+G graphics from timed cues. [CD+G workflow](cdg.md)
 - Export a ZIP-based TPV kit containing relative-path project metadata, lyrics, audio stems, and an optional original CD+G file.
 - Reopen a TPV kit from **Open Project** or the CLI. Studio creates an editable project with its own adjacent media folder and preserves its cue and stem settings.
-- Configure a local Audio Separator executable and UVR-compatible model name. Audio Separator downloads model weights on first use.
+- Choose Audio Separator with a UVR model or Demucs with a supported model. Both run locally.
+- Record a microphone take, audition the take, and save it as a labeled local WAV stem from the [desktop editor](voice-recording.md).
 - Open and save editable Studio projects in one shared file format for the desktop editor and CLI.
 - Keep local snapshots of unsaved desktop edits and pending lyric text. [Project recovery](project-recovery.md) restores these snapshots after reopening Studio.
 - Operate projects, stems, lyric download and timing, backdrop, preferences and exports from the [CLI](cli.md). Lyric downloads use the existing TPV ktools installation and report its version warnings.
@@ -27,14 +29,14 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 ### Not yet implemented
 
 - Convert CD+G graphics into editable text cues. The source format stores colored pixels.
-- Import arbitrary JSON schemas; JSON lyric import currently expects the Studio schema.
-- Direct microphone recording for individual roles, additional separator adapters and remote inference.
+- A graphical JSON mapping editor, punch-in and overdub recording, and optional remote inference.
+- Validate alignment on complete songs and physical microphone recording on supported platforms.
 - Signed Windows packages, notarized macOS installers, and installation and upgrade checks on physical devices.
 - Move stable audio and lyrics interfaces into the shared core repository.
 
 ## Audio separation design
 
-The first separation adapter runs the locally installed audio-separator command. Its configurable executable/model allow different UVR-compatible models and hardware-specific local environments. No account credential, song, or stem is uploaded by Studio. Python, model weights, and accelerator libraries are not bundled with the prototype.
+Studio runs the selected local separator executable with its configured model. Audio Separator supports UVR models. Demucs defaults to htdemucs for vocals, bass, drums and other instruments. The packages leave Python, model weights and accelerator libraries to the selected local tool.
 
 ## Project and kit format
 

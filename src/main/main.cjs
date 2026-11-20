@@ -1,8 +1,10 @@
-const { app, BrowserWindow, dialog, ipcMain, protocol } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, protocol, systemPreferences } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { Readable } = require('node:stream');
-const { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, text, localFile, readCdg, loadSettings, saveSettings, exportKit, exportVideo, exportCdg, separate, alignLyrics } = require('./studio-operations.cjs');
+const { pathToFileURL } = require('node:url');
+const { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, text, localFile, readCdg, loadSettings, saveSettings, exportKit, exportVideo, exportCdg, separate, alignLyrics, writeOutput } = require('./studio-operations.cjs');
+const { validateVoiceRecording } = require('../domain/voice-recording.ts');
 const { loadProject, projectRevision, saveProject } = require('../domain/project-file.mjs');
 const { createRecoveryStore } = require('./recovery.cjs');
 const { importKit } = require('./kit-import.cjs');
@@ -17,6 +19,32 @@ const media = new Map();
 let mainWindow;
 let recovery;
 let quitting = false;
+let microphoneExpiresAt = 0;
+
+function editorUrl() {
+  return process.env.VITE_DEV_SERVER_URL || pathToFileURL(path.join(__dirname, '..', 'dist', 'index.html')).href;
+}
+
+function isEditorContents(contents, url) {
+  if (!contents || !mainWindow || mainWindow.isDestroyed() || contents !== mainWindow.webContents) return false;
+  try { return new URL(url || contents.getURL()).href === new URL(editorUrl()).href; }
+  catch { return false; }
+}
+
+function isEditorFrame(event) {
+  return event.senderFrame === event.sender.mainFrame && isEditorContents(event.sender, event.senderFrame?.url);
+}
+
+function configurePermissions(session) {
+  const isArmed = (contents, details) => details?.isMainFrame === true
+    && Date.now() < microphoneExpiresAt && isEditorContents(contents, details.requestingUrl);
+  session.setPermissionCheckHandler((contents, permission, _origin, details) =>
+    permission === 'media' && details?.mediaType === 'audio' && isArmed(contents, details));
+  session.setPermissionRequestHandler((contents, permission, callback, details) => {
+    callback(permission === 'media' && details?.mediaTypes?.length === 1
+      && details.mediaTypes[0] === 'audio' && isArmed(contents, details));
+  });
+}
 
 function settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
 async function openProject(file) {
@@ -32,6 +60,8 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   const window = mainWindow;
+  microphoneExpiresAt = 0;
+  configurePermissions(window.webContents.session);
   let closing = false;
   let waitingForRecovery = false;
   window.on('close', event => {
@@ -116,6 +146,31 @@ app.whenReady().then(() => {
   ipcMain.handle('studio:choose-audio', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile', 'multiSelections'], filters: [{ name: 'Audio', extensions: [...AUDIO_EXTENSIONS].map(ext => ext.slice(1)) }] });
     return result.canceled ? [] : result.filePaths;
+  });
+  ipcMain.handle('studio:arm-voice-recording', async event => {
+    if (!isEditorFrame(event)) throw new Error('Only the Studio editor can request the microphone.');
+    if (process.platform === 'darwin' && !(await systemPreferences.askForMediaAccess('microphone'))) {
+      throw new Error('Enable the microphone for Studio in macOS Privacy & Security, then reopen the app.');
+    }
+    if (!isEditorFrame(event)) throw new Error('The Studio editor has closed.');
+    microphoneExpiresAt = Date.now() + 15_000;
+  });
+  ipcMain.handle('studio:disarm-voice-recording', event => {
+    if (isEditorFrame(event)) microphoneExpiresAt = 0;
+  });
+  ipcMain.handle('studio:save-voice-recording', async (event, input) => {
+    if (!isEditorFrame(event)) throw new Error('Only the Studio editor can save a recording.');
+    validateVoiceRecording(input?.wav);
+    const name = text(input?.name, 'recording name', 150).replace(/[<>:"/\\|?*\x00-\x1f]/g, '').trim() || 'Studio recording';
+    const destination = await chooseSave(name + '.wav', 'WAV Recording', 'wav');
+    if (!destination) return null;
+    if (path.extname(destination).toLowerCase() !== '.wav') throw new Error('Choose a WAV filename for the voice recording.');
+    try { await writeOutput(destination, false, temporary => fs.writeFile(temporary, input.wav)); }
+    catch (error) {
+      if (error.code === 'EEXIST') throw new Error('That file already exists. Choose a new filename to save this take.');
+      throw error;
+    }
+    return destination;
   });
   ipcMain.handle('studio:choose-image', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: [{ name: 'Image', extensions: [...IMAGE_EXTENSIONS].map(ext => ext.slice(1)) }] });

@@ -1,6 +1,6 @@
 {
   "name": "proper-karaoke-studio",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "author": {
@@ -58,6 +58,9 @@
       ]
     },
     "mac": {
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Studio records voice stems when you start a microphone take."
+      },
       "target": [
         "dmg",
         "zip"

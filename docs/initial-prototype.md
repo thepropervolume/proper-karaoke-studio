@@ -1,6 +1,6 @@
 # Prototype scope
 
-Version 0.5.0 imports and previews local stems, aligns supplied lyrics with WhisperX, captures line or word timing manually, and exports an MP4 or TPV kit. Studio has one editor and shares editable projects with the [CLI](cli.md). The CLI can download lyrics through the user's local TPV ktools installation.
+Version 0.6.0 imports and previews local stems, aligns supplied lyrics with WhisperX, captures line or word timing manually, and exports an MP4 or TPV kit. Studio has one editor and shares editable projects with the [CLI](cli.md). The CLI can download lyrics through the user's local TPV ktools installation.
 
 ## Available
 
@@ -10,15 +10,16 @@ Version 0.5.0 imports and previews local stems, aligns supplied lyrics with Whis
 - Render MP4 with a mixed stem soundtrack, optional still background, and burned-in captions via FFmpeg.
 - Package project data, audio stems, lyrics, and an optional original CD+G source into a TPV kit.
 - Preview and render CD+G graphics with a matching audio file, or author a new CD+G file from timed cues.
-- Configure local FFmpeg and Audio Separator executable/model.
+- Configure local FFmpeg and choose a local Audio Separator or Demucs executable and model.
 - Adjust every imported stem's gain independently in the live preview and final mix.
 - Open and save editable project files in the desktop app, or automate edits and exports from the CLI.
 - Reopen TPV kits, restore unsaved drafts, and use the waveform to place lyric cues.
+- Record local microphone takes and map external timed JSON through the CLI.
 
 ## Limits to address
 
 - Imported CD+G provides a graphics layer. To edit words or timings, import a text or timestamped lyric file.
 - Imported Enhanced LRC word cues are retained and can be retimed in the word timing editor.
-- Separation runs an installed local Audio Separator CLI. Python, GPU runtimes, and model weights are not bundled.
+- Separation runs installed local tools. The packages leave Python, GPU runtimes and model weights to the selected tool.
 - MP4 export requires FFmpeg with H.264 (libx264), AAC, and subtitles/libass support.
-- Additional separation backends, per-voice recording, and signing remain open. See [Studio installers](releases.md) for development packages.
+- Remote inference, advanced recording controls, and signing remain open. See [Studio installers](releases.md) for development packages.

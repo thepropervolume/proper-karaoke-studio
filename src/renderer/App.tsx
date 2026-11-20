@@ -7,6 +7,7 @@ import { applyForcedAlignment } from '../domain/forced-alignment';
 import { CdgPlayer, cdgByteLimit } from '../domain/cdg';
 import { CdgPreview } from './CdgPreview';
 import { WaveformTimeline } from './WaveformTimeline';
+import { VoiceRecorder } from './VoiceRecorder';
 import { version } from '../../package.json';
 
 const roles: StudioRole[] = ['instrumental', 'lead', 'backing', 'other'];
@@ -42,10 +43,11 @@ export function App() {
   const [status, setStatus] = useState('Create a project by importing audio stems.');
   const [error, setError] = useState('');
   const [settings, setSettings] = useState<StudioSettings>({
-    ffmpegPath: 'ffmpeg', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx',
+    ffmpegPath: 'ffmpeg', separatorAdapter: 'audio-separator', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx',
     lyricAlignerExecutable: 'python', alignmentLanguage: 'en',
   });
   const [settingsOpen, setSettingsOpen] = useState(false), [busy, setBusy] = useState(false);
+  const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
   const [cdgPath, setCdgPath] = useState<string | null>(null);
   const [decodedCdg, setDecodedCdg] = useState<CdgPlayer | null>(null);
   const [background, setBackground] = useState<{ url: string; path: string } | null>(null);
@@ -210,6 +212,17 @@ export function App() {
     }
     if (additions.length) await loadStems([...stems, ...additions]);
   }, [loadStems, stems]);
+
+  async function addVoiceRecording(path: string, role: StudioRole, voice: string) {
+    try {
+      const url = await window.studio.registerMedia(path);
+      const durationSeconds = await mediaDuration(url);
+      const stem = { id: crypto.randomUUID(), name: basename(path) || 'Voice take', role, voice, path, url, durationSeconds, volume: 1 };
+      await loadStems([...stemRef.current, stem], Math.max(duration, durationSeconds));
+    } catch (cause) {
+      setError('The take was saved to ' + path + '. Import it as an audio stem to retry. ' + (cause instanceof Error ? cause.message : String(cause)));
+    }
+  }
 
   const onAudioFiles = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -401,7 +414,7 @@ export function App() {
     if (!source) { setError('Import a local audio file before running stem separation.'); return; }
     setBusy(true); setError(''); setStatus('Separating audio with the selected local model…');
     try {
-      const result = await window.studio.separate({ sourcePath: source, executable: settings.separatorExecutable, model: settings.separatorModel });
+      const result = await window.studio.separate({ sourcePath: source, adapter: settings.separatorAdapter, executable: settings.separatorExecutable, model: settings.separatorModel });
       await addLocalPaths(result.files);
       setStatus('Separated audio saved to ' + result.outputDirectory + '.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); setStatus('Stem separation did not finish.'); }
@@ -549,6 +562,11 @@ export function App() {
         <div className="toolbar">
           <label className="button-like"><input className="hidden-input" type="file" accept="audio/*,.wav,.flac,.mp3,.m4a,.ogg" multiple onChange={event => { void onAudioFiles(event.target.files); event.currentTarget.value = ''; }} />＋ Import Stems</label>
           <button onClick={() => void window.studio.chooseAudioFiles().then(addLocalPaths)}>Browse</button>
+          <button disabled={busy || timing || stems.length >= 12} onClick={() => {
+            if (generation.current) player.current?.pause(generation.current);
+            setPlaying(false);
+            setVoiceRecorderOpen(true);
+          }}>Record a stem</button>
         </div>
         <div className="dropzone" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void onAudioFiles(event.dataTransfer.files); }}>Drop audio files here</div>
         <div className="stack" style={{ marginTop: 12 }}>
@@ -564,7 +582,7 @@ export function App() {
           </article>)}
         </div>
         <button style={{ marginTop: 12 }} disabled={!stems.length || busy} onClick={() => void separate()}>Separate a source track…</button>
-        <p className="muted">Uses the configured local UVR-compatible model. No audio is uploaded.</p>
+        <p className="muted">Uses the local separator configured in Preferences.</p>
         <div className="section-title" style={{ marginTop: 26 }}>Lyrics</div>
         <div className="toolbar">
           <label className="button-like"><input className="hidden-input" type="file" accept=".txt,.json,.lrc,.elrc,.srt,.cdg" onChange={event => { const file = event.target.files?.[0]; if (file) void importLyrics(file); event.currentTarget.value = ''; }} />＋ Import Lyrics</label>
@@ -667,6 +685,7 @@ export function App() {
         <button disabled={busy || timing} onClick={() => void showRecovery()}>Recovery drafts{recoveryEntries.length ? ' (' + recoveryEntries.length + ')' : ''}</button>
       </div>
     </footer>
+    {voiceRecorderOpen && <VoiceRecorder title={title} roles={roles} onSaved={addVoiceRecording} onClose={() => setVoiceRecorderOpen(false)} />}
     {recoveryOpen && <div className="settings" role="presentation">
       <section className="settings-card" role="dialog" aria-modal="true" aria-labelledby="recovery-title" onKeyDown={event => {
         if (event.key === 'Escape' && !busy) setRecoveryOpen(false);
@@ -696,11 +715,21 @@ export function App() {
         <p className="muted">Choose the local tools used to render video, separate stems, and align supplied lyrics.</p>
         <div className="stack">
           <label className="field-label">FFmpeg executable<input value={settings.ffmpegPath} onChange={event => setSettings({ ...settings, ffmpegPath: event.target.value })} /></label>
+          <label className="field-label">Stem separator
+            <select value={settings.separatorAdapter} onChange={event => {
+              const adapter = event.target.value as SeparatorAdapter;
+              setSettings({ ...settings, separatorAdapter: adapter, separatorExecutable: adapter,
+                separatorModel: adapter === 'demucs' ? 'htdemucs' : 'UVR-MDX-NET-Inst_HQ_3.onnx' });
+            }}>
+              <option value="audio-separator">Audio Separator (UVR)</option>
+              <option value="demucs">Demucs</option>
+            </select>
+          </label>
           <label className="field-label">Stem separation executable<input value={settings.separatorExecutable} onChange={event => setSettings({ ...settings, separatorExecutable: event.target.value })} /></label>
-          <label className="field-label">UVR / Audio Separator model<input value={settings.separatorModel} onChange={event => setSettings({ ...settings, separatorModel: event.target.value })} /></label>
+          <label className="field-label">Stem separation model<input value={settings.separatorModel} onChange={event => setSettings({ ...settings, separatorModel: event.target.value })} /></label>
           <label className="field-label">Lyric alignment Python executable<input value={settings.lyricAlignerExecutable} onChange={event => setSettings({ ...settings, lyricAlignerExecutable: event.target.value })} /><span className="muted">Use Python 3.10–3.13; a full path is supported.</span></label>
           <label className="field-label">Lyric language code (for example, en)<input value={settings.alignmentLanguage} onChange={event => setSettings({ ...settings, alignmentLanguage: event.target.value })} /></label>
-          <p className="muted">Default: Audio Separator with a UVR MDX model. Install it locally; Audio Separator downloads its selected model on first use.</p>
+          <p className="muted">Install the selected separator locally. The first separation can download model weights.</p>
           <p className="muted">AI lyric synchronization uses local WhisperX forced alignment. Install in the selected Python 3.10–3.13 environment with <code>python -m pip install whisperx</code>; the first run downloads its language model. Audio and lyric text stay on this computer.</p>
         </div>
         <div className="row spaced"><div className="toolbar"><a href="https://github.com/nomadkaraoke/python-audio-separator" target="_blank" rel="noreferrer">Audio Separator setup</a><a href="https://github.com/m-bain/whisperX" target="_blank" rel="noreferrer">WhisperX setup</a></div><button className="primary" onClick={() => void saveSettings()}>Save Preferences</button></div>

@@ -57,6 +57,9 @@ input[type=range] { padding: 0; accent-color: #0eb7ff; }
 .settings { position: fixed; inset: 0; background: #090711c9; display: grid; place-items: center; z-index: 10; }
 .settings-card { width: min(600px, 90vw); background: #211a31; border: 1px solid #514766; border-radius: 16px; padding: 22px; box-shadow: 0 20px 80px #0009; }
 .settings-card .stack { margin: 16px 0; }
+.voice-recorder::backdrop { background: #090711c9; }
+.voice-recorder output { font-variant-numeric: tabular-nums; }
+.voice-recorder audio { width: 100%; }
 .hidden-input { display: none; }
 .button-like { border: 1px solid #514766; border-radius: 9px; background: #28213a; color: #f8f6ff; padding: 9px 13px; cursor: pointer; display: inline-flex; align-items: center; }
 .button-like:hover { background: #382b50; border-color: #8e79b5; }
