@@ -1,6 +1,6 @@
 # Studio installers
 
-Studio preview installers are served from [the Studio download page](https://release.thepropervolume.com/studio). Each version has its own directory. The release server calculates SHA-256 checksums when publishing. Compare the checksum file in that version directory with the file you downloaded.
+Studio preview installers are served from [the Studio download page](https://release.thepropervolume.com/studio). Each version links its corresponding source commit and SHA-256 checksums. Compare the checksum file in that version directory with the file you downloaded.
 
 ## Install a preview
 

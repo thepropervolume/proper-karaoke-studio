@@ -138,6 +138,7 @@ def stage(root, version, commit, platform, stream):
 def page(manifest, *, index=False, versions=(), older_assets=()):
     version = manifest["version"]
     relative = f"v{version}/" if index else ""
+    source = manifest["sourceCommit"]
     files = "\n".join(
         f'<li><a href="{relative}{asset["name"]}" download>{escape(asset["label"])}</a>'
         f' <small>{asset["bytes"] / 1024**2:.1f} MiB</small></li>'
@@ -169,6 +170,7 @@ def page(manifest, *, index=False, versions=(), older_assets=()):
 {partial}
 <ul>{files}</ul>
 <p><a href="{relative}SHA256SUMS.txt" download>SHA-256 checksums</a> · <a href="{relative}release-manifest.json">Release manifest</a></p>
+<p><a href="https://github.com/thepropervolume/proper-karaoke-studio/tree/{escape(source)}">Corresponding source code</a></p>
 {f'<h2>Latest builds for other platforms</h2><ul>{older}</ul>' if older else ''}
 {f'<h2>Earlier releases</h2><ul>{history}</ul>' if history else ''}
 <p>{footer} · <a href="/">All downloads</a></p>

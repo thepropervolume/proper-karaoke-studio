@@ -4,7 +4,7 @@
 
 The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaoke tracks from audio stems and timed lyrics. It previews the result with the same lyric renderer used in The Proper Volume Karaoke Booth, then exports a video or a portable TPV kit.
 
-## Prototype 0.9.0
+## Prototype 0.10.0
 
 ### Implemented
 
@@ -13,16 +13,18 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 - Paste lyrics and capture line or word starts during playback with the timing button or Spacebar; cue and word start/end times are directly editable.
 - Scrub through a zoomable waveform and move a selected lyric cue to the playhead while retaining its word timing offsets.
 - Work in a Booth-style workspace with Day and Night appearance, selectable accents, a large singer preview, a resizable editor, and fixed playback controls. [Workspace guide](workspace.md)
-- Save per-project lyric font, casing, one to four lines, and a custom palette. The preview and authored video and CD+G exports share a centered layout and per-line visibility schedule.
+- Save per-project lyric font, casing, one to four lines, and a custom palette with picker and hex inputs. The preview and authored video and CD+G exports share a centered layout and per-line visibility schedule.
+- Format imported or pasted lyrics with adjustable minimum, target, and maximum line lengths. The formatter leaves timed cues available until the user rebuilds them. [Formatting guide](workspace.md)
 - Force-align supplied lyrics to a selected local audio track with WhisperX. The alignment path does not run speech recognition, generate lyrics, or change supplied text; exact lyric words and line breaks are retained while timings are added.
 - Import and export the Studio lyrics JSON schema, Enhanced LRC word timestamps, and SRT line cues. Studio uses Karaoke Core for LRC, SRT, and the common timing types.
 - Map external timed lyric JSON through explicit JSON Pointer paths and time units in the [CLI](json-lyric-import.md).
-- Render an MP4 with mixed audio, karaoke highlighting, and an optional still-image background through a configured local FFmpeg executable.
+- Render an MP4 with mixed audio, karaoke highlighting, and optional still, GIF, or muted MP4 backgrounds. Animated backgrounds support looping; the preview and rendered action follow the song timeline.
 - Import and preview original CD+G graphics with local audio, render them to MP4, and author new CD+G graphics from timed cues. [CD+G workflow](cdg.md)
-- Export a ZIP-based TPV kit containing relative-path project metadata, lyrics, audio stems, and an optional original CD+G file.
+- Export a ZIP-based TPV kit containing relative-path project metadata, lyrics, audio stems, and optional backdrop media and original CD+G graphics.
 - Reopen a TPV kit from **Open Project** or the CLI. Studio creates an editable project with its own adjacent media folder and preserves its cue and stem settings.
-- Choose a stem-separation model from a dropdown for Audio Separator (UVR), Demucs, or Dango AI. Local tools report available models when supported.
-- Manage encrypted third-party credentials from Preferences. Dango verifies developer credentials and processes audio in the cloud after explicit confirmation. Custom entries store credentials for services that may receive adapters in the future.
+- Download verified model weights or reuse local Ultimate Vocal Remover models. Audio Separator ensembles can combine models and split the result into lead, backing, and instrumental tracks. [Model library](models.md)
+- Manage encrypted credentials for Dango AI, MVSEP, and GAUDIO. Review and approve each cloud stem-separation request. Custom entries store credentials for other services.
+- Apply Preferences for this session or save them as defaults. Reset individual fields to the saved defaults.
 - Record a microphone take, audition the take, and save it as a labeled local WAV stem from the [desktop editor](voice-recording.md).
 - Open and save editable Studio projects in one shared file format for the desktop editor and CLI.
 - Keep local snapshots of unsaved desktop edits and pending lyric text. [Project recovery](project-recovery.md) restores these snapshots after reopening Studio.
@@ -40,11 +42,11 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 
 ## Audio separation design
 
-Studio runs the configured local separator or makes an approved Dango AI cloud request. Audio Separator supports UVR models. Demucs defaults to htdemucs for vocals, bass, drums and other instruments. The chosen local separator manages its own model weights and accelerator libraries. [Stem separation guide](audio-separation.md)
+Studio runs the configured Audio Separator or Demucs executable, or an approved Dango AI, MVSEP, or GAUDIO cloud job. A local second pass can split lead and backing vocals. Studio checks pinned upstream checksums when downloading its recommended models. [Stem separation guide](audio-separation.md)
 
 ## Project and kit format
 
-A TPV kit is a ZIP archive containing manifest.json, lyrics/lyrics.json, lyrics/lyrics.enhanced.lrc, lyrics/lyrics.srt, and a stems/ directory. When present, an original CD+G source is kept under source/. Paths in the manifest are relative to the kit. Kit schema version 1 is private to Studio until its format is reviewed and published.
+A TPV kit is a ZIP archive containing manifest.json, lyrics/lyrics.json, lyrics/lyrics.enhanced.lrc, lyrics/lyrics.srt, and a stems/ directory. Optional CD+G graphics and backdrop media live under source/ and background/. Paths in the manifest are relative to the kit. Kit schema version 1 is private to Studio until its format is reviewed and published.
 
 ## File-format support
 
