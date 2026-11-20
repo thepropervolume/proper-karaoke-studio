@@ -23,7 +23,7 @@ const commands = {
   'stems list': '',
   'stems edit': ' <stem> [--path <audio>] [--role <role>] [--voice <name>] [--name <name>] [--volume <gain>] [--duration <seconds>] [--ffmpeg <exe>]',
   'stems remove': ' <stem...>',
-  'stems separate': ' <audio> --output-dir <directory> [--add] [--executable <exe>] [--model <model>] [--ffmpeg <exe>]',
+  'stems separate': ' <audio> --output-dir <directory> [--add] [--adapter <audio-separator|demucs>] [--executable <exe>] [--model <model>] [--ffmpeg <exe>]',
   'lyrics import': ' <file> [--mapping <mapping.json>]',
   'lyrics show': ' [<line>]',
   'lyrics set': ' <text-file> | --text <lyrics>',
@@ -214,14 +214,20 @@ async function align(args, settings) {
 
 async function separate(args, settings, dependencies) {
   positionals(args, 1);
+  const adapter = args.options.adapter ?? settings.separatorAdapter;
+  if (!Object.hasOwn(operations.separationDefaults, adapter)) usage('Choose audio-separator or demucs for --adapter.');
+  const preferred = adapter === settings.separatorAdapter
+    ? { executable: settings.separatorExecutable, model: settings.separatorModel }
+    : operations.separationDefaults[adapter];
   const file = projectFile(args);
   const project = args.options.add ? await loadProject(file) : null;
   const directory = path.resolve(requiredOption(args.options, 'output-dir'));
   await mkdir(directory, { recursive: true });
   const result = await operations.separate({
     sourcePath: path.resolve(args.positional[0]),
-    executable: args.options.executable || settings.separatorExecutable,
-    model: args.options.model || settings.separatorModel,
+    adapter,
+    executable: args.options.executable || preferred.executable,
+    model: args.options.model || preferred.model,
   }, directory);
   if (project) {
     try {
@@ -270,7 +276,13 @@ async function dispatch(command, args) {
     if (action === 'show') return { path: preferences, settings };
     const [key, value] = args.positional;
     if (!settingsKeys.includes(key)) usage('Choose a setting: ' + settingsKeys.join(', '));
-    return { path: preferences, settings: operations.saveSettings(preferences, { ...settings, [key]: value }) };
+    const next = { ...settings, [key]: value };
+    if (key === 'separatorAdapter' && value !== settings.separatorAdapter) {
+      if (!Object.hasOwn(operations.separationDefaults, value)) usage('Choose audio-separator or demucs.');
+      next.separatorExecutable = operations.separationDefaults[value].executable;
+      next.separatorModel = operations.separationDefaults[value].model;
+    }
+    return { path: preferences, settings: operations.saveSettings(preferences, next) };
   }
   if (group === 'export') return exportProject(action, args, settings);
   if (command === 'project open') return openDesktop(args);

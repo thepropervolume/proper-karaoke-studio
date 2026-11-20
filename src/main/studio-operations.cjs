@@ -11,7 +11,11 @@ const { CdgEncoder, cdgExportFrameRate, cdgRgbFrameBytes } = require('../domain/
 
 const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.aiff', '.wma']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
-const defaultSettings = { ffmpegPath: 'ffmpeg', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx', lyricAlignerExecutable: process.platform === 'win32' ? 'python' : 'python3', alignmentLanguage: 'en' };
+const separationDefaults = {
+  'audio-separator': { executable: 'audio-separator', model: 'UVR-MDX-NET-Inst_HQ_3.onnx' },
+  demucs: { executable: 'demucs', model: 'htdemucs' },
+};
+const defaultSettings = { ffmpegPath: 'ffmpeg', separatorAdapter: 'audio-separator', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx', lyricAlignerExecutable: process.platform === 'win32' ? 'python' : 'python3', alignmentLanguage: 'en' };
 
 function text(input, field, max = 500) {
   if (typeof input !== 'string' || input.length > max) throw new Error('Invalid ' + field + '.');
@@ -51,20 +55,25 @@ async function readCdg(value) {
 function loadSettings(file) {
   try {
     const value = JSON.parse(readFileSync(file, 'utf8'));
+    const separatorAdapter = Object.hasOwn(separationDefaults, value.separatorAdapter) ? value.separatorAdapter : defaultSettings.separatorAdapter;
     return {
       ffmpegPath: typeof value.ffmpegPath === 'string' ? value.ffmpegPath : defaultSettings.ffmpegPath,
-      separatorExecutable: typeof value.separatorExecutable === 'string' ? value.separatorExecutable : defaultSettings.separatorExecutable,
-      separatorModel: typeof value.separatorModel === 'string' ? value.separatorModel : defaultSettings.separatorModel,
+      separatorAdapter,
+      separatorExecutable: typeof value.separatorExecutable === 'string' ? value.separatorExecutable : separationDefaults[separatorAdapter].executable,
+      separatorModel: typeof value.separatorModel === 'string' ? value.separatorModel : separationDefaults[separatorAdapter].model,
       lyricAlignerExecutable: typeof value.lyricAlignerExecutable === 'string' ? value.lyricAlignerExecutable : defaultSettings.lyricAlignerExecutable,
       alignmentLanguage: typeof value.alignmentLanguage === 'string' ? value.alignmentLanguage : defaultSettings.alignmentLanguage,
     };
   } catch { return { ...defaultSettings }; }
 }
 function saveSettings(file, value) {
+  const separatorAdapter = value?.separatorAdapter ?? defaultSettings.separatorAdapter;
+  if (!Object.hasOwn(separationDefaults, separatorAdapter)) throw new Error('Choose Audio Separator or Demucs.');
   const result = {
     ffmpegPath: text(value?.ffmpegPath, 'FFmpeg executable', 4096).trim() || 'ffmpeg',
-    separatorExecutable: text(value?.separatorExecutable, 'separator executable', 4096).trim() || 'audio-separator',
-    separatorModel: text(value?.separatorModel, 'model name', 160).trim(),
+    separatorAdapter,
+    separatorExecutable: text(value?.separatorExecutable, 'separator executable', 4096).trim() || separationDefaults[separatorAdapter].executable,
+    separatorModel: text(value?.separatorModel, 'model name', 160).trim() || separationDefaults[separatorAdapter].model,
     lyricAlignerExecutable: text(value?.lyricAlignerExecutable, 'Python executable', 4096).trim() || defaultSettings.lyricAlignerExecutable,
     alignmentLanguage: text(value?.alignmentLanguage, 'alignment language', 16).trim() || 'en',
   };
@@ -243,13 +252,22 @@ async function exportVideo(input, destination, overwrite = true) {
 
 async function separate(input, directory) {
   const source = await localFile(input?.sourcePath, AUDIO_EXTENSIONS);
-  const executable = text(input?.executable, 'separator executable', 4096).trim();
-  const model = text(input?.model, 'separator model', 160).trim();
-  if (!executable || !/^[\w.-]+$/.test(model)) throw new Error('Configure a valid executable and model name in Preferences.');
+  const adapter = input.adapter ?? defaultSettings.separatorAdapter;
+  if (!Object.hasOwn(separationDefaults, adapter)) throw new Error('Choose Audio Separator or Demucs.');
+  const executable = text(input.executable ?? separationDefaults[adapter].executable, 'separator executable', 4096).trim();
+  const model = text(input.model ?? separationDefaults[adapter].model, 'model name', 160).trim();
+  if (!executable || model === '.' || model === '..' || !/^[\w.-]+$/.test(model)) throw new Error('Configure a valid executable and model name in Preferences.');
   const outputDirectory = await fs.mkdtemp(path.join(directory, 'tpv-separated-'));
-  await spawnTool(executable, [source, '--model_filename', model, '--output_dir', outputDirectory], 'Audio Separator');
-  const entries = await fs.readdir(outputDirectory, { withFileTypes: true });
-  const files = entries.filter(item => item.isFile() && AUDIO_EXTENSIONS.has(path.extname(item.name).toLowerCase())).map(item => path.join(outputDirectory, item.name));
+  const demucs = adapter === 'demucs';
+  if (demucs) await spawnTool(executable, ['--name', model, '--out', outputDirectory, source], 'Demucs');
+  else await spawnTool(executable, [source, '--model_filename', model, '--output_dir', outputDirectory], 'Audio Separator');
+  const stemDirectory = demucs ? path.join(outputDirectory, model, path.parse(source).name) : outputDirectory;
+  const entries = await fs.readdir(stemDirectory, { withFileTypes: true }).catch(error => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  const files = entries.filter(item => item.isFile() && AUDIO_EXTENSIONS.has(path.extname(item.name).toLowerCase()))
+    .map(item => path.join(stemDirectory, item.name)).sort();
   if (!files.length) throw new Error('Separation completed but produced no supported audio files.');
   return { files, outputDirectory };
 }
@@ -272,4 +290,4 @@ async function alignLyrics(input, scriptPath) {
   } finally { await fs.rm(tempDir, { recursive: true, force: true }); }
 }
 
-module.exports = { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, defaultSettings, text, localFile, readCdg, loadSettings, saveSettings, exportKit, exportVideo, exportCdg, separate, alignLyrics, probeAudio, writeOutput };
+module.exports = { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, defaultSettings, separationDefaults, text, localFile, readCdg, loadSettings, saveSettings, exportKit, exportVideo, exportCdg, separate, alignLyrics, probeAudio, writeOutput };
