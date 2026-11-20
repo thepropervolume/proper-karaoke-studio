@@ -8,7 +8,7 @@ Studio preview installers are served from [the Studio download page](https://rel
 - On Linux x64, install the Debian package on a compatible system or make the AppImage executable and launch it.
 - On macOS, choose Apple silicon for an M-series Mac or Intel for an Intel Mac. Open the DMG and move the app into Applications. Studio previews are currently unsigned for distribution.
 
-Keep project media beside your editable project or back it up in a TPV kit before switching machines. Install the local audio tools described below if you need alignment, stem separation or media rendering.
+Keep project media beside your editable project or back it up in a TPV kit before switching machines. On supported platforms, Studio sets up its AI Sync runtime on demand. Local stem separation and video export use separately installed tools.
 
 ## Build locally
 
@@ -21,7 +21,7 @@ Use Node.js 24 and the native operating system for each package. Run `npm ci` an
 | macOS Apple Silicon | `npm run package:mac -- --arm64 --publish never` | DMG and ZIP |
 | macOS Intel | `npm run package:mac -- --x64 --publish never` | DMG and ZIP |
 
-The CI builds use no publisher signing credentials. Windows shows the preview installer as unsigned. macOS preview builds are not notarized. Python, WhisperX, FFmpeg and Audio Separator are installed separately when needed. See the [CLI guide](cli.md), [alignment setup](lyric-synchronization.md), and [audio separation guide](audio-separation.md).
+The CI builds use no publisher signing credentials. Windows shows the preview installer as unsigned. macOS preview builds are not notarized. Studio installs its managed Python and WhisperX on Windows x64, Linux x64, and Apple silicon Mac. Set up FFmpeg, Audio Separator, or Demucs separately for their respective features. See the [CLI guide](cli.md), [alignment setup](lyric-synchronization.md), and [audio separation guide](audio-separation.md).
 
 ## Publish
 
