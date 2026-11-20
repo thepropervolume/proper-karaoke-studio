@@ -22,7 +22,7 @@ See [Demucs](https://github.com/facebookresearch/demucs), [Audio Separator](http
 
 ## Dango AI
 
-Open **Preferences → Integrations → Dango AI** and save your developer **App Key** and **App Secret**. **Verify Credentials** checks authentication. Choose **Dango AI (Cloud)** and a model in **Audio & Lyrics**, then save Preferences. Studio asks where to save stems and prompts before each WAV, MP3, or FLAC upload. Separation may use Dango credits. [Dango Open Platform](https://tuanziai.com/doc/) · [Vocal separation](https://tuanziai.com/doc/vocal-remover.html)
+Open **Preferences → Integrations → Dango AI** and save your developer **App Key** and **App Secret**. **Verify Credentials** sends a signed test message to check authentication. Choose **Dango AI (Cloud)** and a model in **Audio & Lyrics**, then save Preferences. Studio asks where to save stems and prompts before each WAV, MP3, or FLAC upload. Separation may use Dango credits. [Dango Open Platform](https://tuanziai.com/doc/) · [Vocal separation](https://tuanziai.com/doc/vocal-remover.html)
 
 The **Integrations** panel also accepts custom entries for storing other service credentials. Studio encrypts credentials with the operating system's key storage and uses an unlocked keyring on Linux. Custom entries require a dedicated Studio adapter before they can make API calls.
 

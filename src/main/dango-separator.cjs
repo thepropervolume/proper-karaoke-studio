@@ -13,6 +13,8 @@ const STORAGE_HOSTS = new Set([
 ]);
 const AUDIO_FORMATS = { '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.flac': 'audio/flac' };
 const SEPARATION_STYLES = new Set(['29', '30', '31']);
+const DOWNLOAD_MODELS = new Set(['default', 'conserve', 'aggressive']);
+const DOWNLOAD_FORMATS = new Set(['mp3', 'flac']);
 const MAX_JSON_BYTES = 128 * 1024;
 const MAX_AUDIO_BYTES = 512 * 1024 * 1024;
 const JOB_POLL_TIMEOUT_MS = 8 * 60_000;
@@ -30,6 +32,20 @@ function normalizeDangoCredentials(credentials) {
     throw new Error('Enter a valid Dango App Key and App Secret.');
   }
   return { appKey, appSecret };
+}
+
+function separationOptions(style, extension, options) {
+  if (!options || typeof options !== 'object' || Array.isArray(options)
+    || Object.keys(options).some(key => !['separateBackingVocals', 'modelType', 'format'].includes(key))) {
+    throw new Error('Choose supported Dango model options.');
+  }
+  const { separateBackingVocals = false, modelType = 'default', format } = options;
+  if (typeof separateBackingVocals !== 'boolean') throw new Error('Set separateBackingVocals to true or false.');
+  if (separateBackingVocals && style !== '31') throw new Error('Use Dango model 31 to separate backing vocals.');
+  if (!DOWNLOAD_MODELS.has(modelType)) throw new Error('Choose the Dango download model default, conserve, or aggressive.');
+  if (format !== undefined && !DOWNLOAD_FORMATS.has(format)) throw new Error('Choose MP3 or FLAC for Dango stems.');
+  if (format === 'flac' && !['.flac', '.wav'].includes(extension)) throw new Error('Choose a WAV or FLAC source to download Dango stems as FLAC.');
+  return { separateBackingVocals, modelType, format };
 }
 
 function storageUrl(value, forDownload = false) {
@@ -84,13 +100,13 @@ async function readJson(response) {
 
 function apiClient(credentials, fetchImpl, now) {
   const { appKey, appSecret } = normalizeDangoCredentials(credentials);
-  return async (endpoint, { method = 'POST', data, label, signal } = {}) => {
+  return async (endpoint, { data, label, signal } = {}) => {
     const timestamp = String(now());
     // Dango's published authentication format uses MD5 and epoch milliseconds.
     const signature = createHash('md5').update(appSecret + timestamp).digest('hex');
     const headers = { Accept: 'application/json', token: appKey + '$$' + timestamp + '$$' + signature };
     if (data !== undefined) headers['Content-Type'] = 'application/json';
-    const response = await request(fetchImpl, API + endpoint, { method, headers, body: JSON.stringify(data) }, label, signal, 15_000);
+    const response = await request(fetchImpl, API + endpoint, { method: 'POST', headers, body: JSON.stringify(data) }, label, signal, 15_000);
     if (!response.ok) {
       await closeBody(response);
       const detail = [401, 403].includes(response.status) ? ' Check your Dango App Key and App Secret.' : '';
@@ -109,7 +125,9 @@ function apiClient(credentials, fetchImpl, now) {
 
 async function checkDangoConnection(credentials, { fetchImpl = fetch, now = Date.now } = {}) {
   const api = apiClient(credentials, fetchImpl, now);
-  if (await api('/echo', { method: 'GET', label: 'Dango connection test' }) !== 'ok') {
+  // The live endpoint accepts the documented JSON echo. Its bodyless GET can reject a valid signature.
+  const test = 'tpv-studio-check';
+  if (await api('/echo', { data: { test }, label: 'Dango connection test' }) !== test) {
     throw new Error('Dango returned an unexpected connection test result.');
   }
   return { connected: true };
@@ -208,12 +226,13 @@ async function downloadStem(fetchImpl, remoteUrl, file, format, signal) {
 }
 
 /** Call only after the user confirms uploading this file and spending their Dango credits. */
-async function separateWithDango({ credentials, sourcePath, outputDirectory: parent, model = '29', signal },
+async function separateWithDango({ credentials, sourcePath, outputDirectory: parent, model = '29', modelOptions = {}, signal },
   { fetchImpl = fetch, now = Date.now, delay = waitFor } = {}) {
   const api = apiClient(credentials, fetchImpl, now);
   const style = String(model);
   if (!SEPARATION_STYLES.has(style)) throw new Error('Choose a supported Dango separation model.');
   const extension = typeof sourcePath === 'string' ? extname(sourcePath).toLowerCase() : '';
+  const options = separationOptions(style, extension, modelOptions);
   const audio = await sourceAudio(sourcePath, extension);
   if (typeof parent !== 'string' || !isAbsolute(parent)) throw new Error('Choose a valid local stem destination.');
   const outputDirectory = await mkdtemp(join(parent, 'tpv-dango-'));
@@ -221,10 +240,14 @@ async function separateWithDango({ credentials, sourcePath, outputDirectory: par
   let jobId;
   let submitted = false;
   let complete = false;
+  let outputs = [];
   try {
     const filename = 'song' + extension;
     const channel = await api('/vocal-remover/upload/channel', {
-      data: { uploadVersion: 2, style: Number(style), filename },
+      data: {
+        uploadVersion: 2, style: Number(style), filename,
+        ...(options.separateBackingVocals ? { config: { separateBackingVocals: true } } : {}),
+      },
       label: 'Dango upload setup', signal,
     });
     const channelId = jobIdentifier(channel?.channel);
@@ -235,27 +258,27 @@ async function separateWithDango({ credentials, sourcePath, outputDirectory: par
     submitted = true;
     jobId = jobIdentifier(await api('/vocal-remover/upload/' + channelId + '/result', { label: 'Dango submission', signal }));
     const status = await waitForJob(api, jobId, signal, delay);
-    const format = extension !== '.mp3' && status.lossless === true ? 'flac' : 'mp3';
-    const files = [];
-    for (const [item, name] of [['instrumental', 'Instrumental'], ['vocals', 'Vocals']]) {
-      const result = await api('/vocal-remover/' + jobId + '/download/default/' + format + '/' + item,
+    const lossless = extension !== '.mp3' && status.lossless === true;
+    if (options.format === 'flac' && !lossless) throw new Error('Dango reports MP3-only results. Download the MP3 stems from your Dango jobs.');
+    const format = options.format ?? (lossless ? 'flac' : 'mp3');
+    const stems = [['instrumental', 'Instrumental'], ['vocals', 'Vocals']];
+    if (options.separateBackingVocals) stems.push(['backVocals', 'Backing Vocals']);
+    outputs = stems.map(([item, name]) => ({ item, file: join(outputDirectory, name + '.' + format) }));
+    for (const { item, file } of outputs) {
+      const result = await api('/vocal-remover/' + jobId + '/download/' + options.modelType + '/' + format + '/' + item,
         { label: 'Dango download setup', signal });
-      const file = join(outputDirectory, name + '.' + format);
       await downloadStem(fetchImpl, result?.url, file, format, signal);
-      files.push(file);
     }
     complete = true;
-    return { files, outputDirectory, jobId };
+    return { files: outputs.map(output => output.file), outputDirectory, jobId };
   } catch (error) {
     if (jobId) throw new Error(error.message + ' Check Dango job ' + jobId + ' before submitting again.');
     if (submitted) throw new Error(error.message + ' Check your Dango jobs before submitting again.');
     throw error;
   } finally {
     if (!complete) {
-      // Only these two app-generated paths can exist in the fresh output directory.
-      for (const file of ['Instrumental.flac', 'Instrumental.mp3', 'Vocals.flac', 'Vocals.mp3']) {
-        await rm(join(outputDirectory, file), { force: true }).catch(() => {});
-      }
+      // Remove only the app-generated paths, including any partially downloaded stem.
+      for (const { file } of outputs) await rm(file, { force: true }).catch(() => {});
       await rmdir(outputDirectory).catch(() => {});
     }
   }
