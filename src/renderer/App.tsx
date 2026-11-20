@@ -4,11 +4,13 @@ import { paintKaraFunLyrics } from '../shared/from-booth/display/karafun-lyrics'
 import { finishTimedWord, newLyricLines, recordTimedWordStart, seedTimedWords, timedWordCount, toPortableKitProject, toRenderTiming, type LyricLine, type StudioProject, type StudioRole, type StudioStem } from '../domain/project';
 import { parseLyricsFile, toAss, toLrc, toLyricsJson, toSrt } from '../domain/lyrics-formats';
 import { applyForcedAlignment } from '../domain/forced-alignment';
+import { version } from '../../package.json';
 
 const roles: StudioRole[] = ['instrumental', 'lead', 'backing', 'other'];
 const allAudible = { instrumental: 1, lead: 1, backing: 1, other: 1 } as const;
 const seconds = (value: number) => Math.floor(value / 60) + ':' + (value % 60).toFixed(1).padStart(4, '0');
 const safeName = (value: string) => value.trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 100) || 'Untitled';
+const basename = (value: string) => value.split(/[\\/]/).at(-1);
 
 async function mediaDuration(url: string): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -32,6 +34,7 @@ export function App() {
   const [position, setPosition] = useState(0), [duration, setDuration] = useState(0);
   const [playing, setPlaying] = useState(false), [volume, setVolume] = useState(0.8);
   const [lyricsDraft, setLyricsDraft] = useState(''), [nextLine, setNextLine] = useState(0), [nextWord, setNextWord] = useState(0), [captureMode, setCaptureMode] = useState<'line' | 'word'>('line'), [timing, setTiming] = useState(false);
+  const [draftPending, setDraftPending] = useState(false);
   const [status, setStatus] = useState('Create a project by importing audio stems.');
   const [error, setError] = useState('');
   const [settings, setSettings] = useState<StudioSettings>({
@@ -41,6 +44,8 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false), [busy, setBusy] = useState(false);
   const [cdgPath, setCdgPath] = useState<string | null>(null);
   const [background, setBackground] = useState<{ url: string; path: string } | null>(null);
+  const [openedProject, setOpenedProject] = useState<{ file: string; revision: string; snapshot: string } | null>(null);
+  const initialProjectChecked = useRef(false);
 
   useEffect(() => {
     player.current = new KaraokePlayer({ onEvent(event: KaraokePlayerEvent) {
@@ -80,15 +85,15 @@ export function App() {
     return () => window.removeEventListener('resize', paint);
   }, [renderTiming, position]);
 
-  const loadStems = useCallback(async (next: StudioStem[]) => {
+  const loadStems = useCallback(async (next: StudioStem[], projectDuration?: number) => {
     player.current?.stop();
     setPlaying(false); setError('');
-    if (!next.length) { generation.current = ''; setStems([]); setDuration(0); setStatus('Import audio stems to begin.'); return; }
+    if (!next.length) { generation.current = ''; setStems([]); setPosition(0); setDuration(projectDuration ?? 0); setStatus('Import audio stems to begin.'); return; }
     const id = crypto.randomUUID();
     generation.current = id;
     setStems(next);
     setAlignmentStemId(current => next.some(stem => stem.id === current) ? current : (next.find(stem => stem.role === 'lead') || next[0]).id);
-    const songDuration = Math.max(...next.map(item => item.durationSeconds));
+    const songDuration = projectDuration ?? Math.max(...next.map(item => item.durationSeconds));
     setDuration(songDuration); setPosition(0);
     const inputs: KaraokeStemSource[] = next.map((stem, index) => ({ id: index + 1, role: stem.role, voice: stem.voice || stem.name, src: stem.url }));
     setStatus('Preparing stems for preview…');
@@ -100,6 +105,38 @@ export function App() {
       setStatus(next.length + ' stem' + (next.length === 1 ? '' : 's') + ' ready · ' + seconds(songDuration));
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); setStatus('Could not prepare the audio.'); }
   }, [volume]);
+
+  const applyProject = useCallback(async ({ file, project, revision }: OpenedStudioProject) => {
+    // Register the new project's media before replacing the current editor state.
+    const media = await Promise.all(project.stems.map(async stem => ({
+      ...stem, url: await window.studio.registerMedia(stem.path),
+    })));
+    const image = project.backgroundPath
+      ? { path: project.backgroundPath, url: await window.studio.registerMedia(project.backgroundPath) }
+      : null;
+    for (const stem of stemRef.current) if (stem.file) URL.revokeObjectURL(stem.url);
+    setTitle(project.title);
+    setArtist(project.artist);
+    setLines(project.lyrics);
+    setLyricsDraft(project.lyrics.map(line => line.text).join('\n'));
+    setDraftPending(false);
+    setNextLine(0); setNextWord(0); setTiming(false);
+    setCdgPath(project.importedCdg ?? null);
+    setBackground(image);
+    await loadStems(media, project.durationSeconds || undefined);
+    setOpenedProject({ file, revision, snapshot: JSON.stringify(project) });
+    setStatus('Opened ' + basename(file) + '.');
+  }, [loadStems]);
+
+  useEffect(() => {
+    if (initialProjectChecked.current) return;
+    initialProjectChecked.current = true;
+    setBusy(true);
+    void window.studio.initialProject()
+      .then(project => project ? applyProject(project) : undefined)
+      .catch(cause => setError(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setBusy(false));
+  }, [applyProject]);
 
   const addLocalPaths = useCallback(async (paths: string[]) => {
     const additions: StudioStem[] = [];
@@ -151,6 +188,7 @@ export function App() {
 
   const makeLines = () => {
     setLines(newLyricLines(lyricsDraft, duration || 240)); setNextLine(0); setTiming(false);
+    setDraftPending(false);
     setStatus('Lyrics added. Start playback and tap each line as it is sung.');
   };
   const beginTiming = async () => {
@@ -246,11 +284,23 @@ export function App() {
       return;
     }
     try {
+      if (file.name.toLowerCase().endsWith('.txt')) {
+        const contents = (await file.text()).replace(/^\uFEFF/, '');
+        const cues = newLyricLines(contents, duration || 240);
+        if (!cues.length) throw new Error('The text file contains no lyrics.');
+        setLines(cues);
+        setLyricsDraft(cues.map(line => line.text).join('\n'));
+        setDraftPending(false);
+        setNextLine(0); setNextWord(0); setTiming(false);
+        setStatus('Imported ' + cues.length + ' lines from ' + file.name + '.');
+        return;
+      }
       const imported = parseLyricsFile(file.name, await file.text());
       setLines(imported.lines);
       if (imported.title) setTitle(imported.title);
       if (imported.artist) setArtist(imported.artist);
       setLyricsDraft(imported.lines.map(line => line.text).join('\n'));
+      setDraftPending(false);
       setStatus('Imported ' + imported.lines.length + ' lyric cues from ' + file.name + '.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
@@ -285,7 +335,29 @@ export function App() {
 
   const currentProject: StudioProject = {
     schema: 'com.thepropervolume.karaoke-studio', version: 1, title, artist, durationSeconds: duration,
-    stems: stems.map(({ file: _file, url: _url, ...stem }) => stem), lyrics: lines, importedCdg: cdgPath,
+    stems: stems.map(({ file: _file, url: _url, ...stem }) => stem), lyrics: lines, importedCdg: cdgPath, backgroundPath: background?.path ?? null,
+  };
+  const openProject = async () => {
+    const edited = openedProject ? openedProject.snapshot !== JSON.stringify(currentProject)
+      : Boolean(stems.length || lines.length || background || cdgPath || title || artist);
+    if ((edited || draftPending) && !window.confirm('Open another project and discard unsaved changes?')) return;
+    setBusy(true); setError('');
+    try {
+      const opened = await window.studio.openProject();
+      if (opened) await applyProject(opened);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
+  };
+  const saveProject = async (saveAs = false) => {
+    if (draftPending) { setError('Build cues from the new lyric text before saving the project.'); return; }
+    setBusy(true); setError('');
+    try {
+      const saved = await window.studio.saveProject(currentProject, saveAs ? undefined : openedProject ?? undefined);
+      if (!saved) return;
+      setOpenedProject({ file: saved.file, revision: saved.revision, snapshot: JSON.stringify(saved.project) });
+      setStatus('Saved ' + basename(saved.file) + '.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
   };
   const exportKit = async () => {
     setBusy(true); setError('');
@@ -321,6 +393,9 @@ export function App() {
       <div className="brand-mark">TPV</div><div className="brand-title">The Proper Volume Karaoke Studio</div>
       <input className="project-name" aria-label="Song title" placeholder="Song title" value={title} onChange={event => setTitle(event.target.value)} />
       <input className="project-name" aria-label="Artist" placeholder="Artist" value={artist} onChange={event => setArtist(event.target.value)} />
+      <button disabled={busy || timing} onClick={() => void openProject()}>Open Project</button>
+      <button disabled={busy || timing} onClick={() => void saveProject()} title={openedProject?.file}>Save Project</button>
+      {openedProject && <button disabled={busy || timing} onClick={() => void saveProject(true)}>Save As</button>}
       <button onClick={() => setSettingsOpen(true)} aria-label="Open preferences">⚙ Preferences</button>
     </header>
     <main className="main-grid">
@@ -348,10 +423,14 @@ export function App() {
         <p className="muted">Uses the configured local UVR-compatible model. No audio is uploaded.</p>
         <div className="section-title" style={{ marginTop: 26 }}>Lyrics</div>
         <div className="toolbar">
-          <label className="button-like"><input className="hidden-input" type="file" accept=".json,.lrc,.elrc,.srt,.cdg" onChange={event => { const file = event.target.files?.[0]; if (file) void importLyrics(file); event.currentTarget.value = ''; }} />＋ Import Lyrics</label>
+          <label className="button-like"><input className="hidden-input" type="file" accept=".txt,.json,.lrc,.elrc,.srt,.cdg" onChange={event => { const file = event.target.files?.[0]; if (file) void importLyrics(file); event.currentTarget.value = ''; }} />＋ Import Lyrics</label>
           <button onClick={makeLines}>Build from text</button>
         </div>
-        <textarea rows={5} className="small-input" placeholder="Paste lyrics, one line per cue" value={lyricsDraft} onChange={event => setLyricsDraft(event.target.value)} />
+        <textarea rows={5} className="small-input" placeholder="Paste lyrics, one line per cue" value={lyricsDraft} onChange={event => {
+          const draft = event.target.value;
+          setLyricsDraft(draft);
+          setDraftPending(Boolean(draft.trim()) && draft.trim() !== lines.map(line => line.text).join('\n').trim());
+        }} />
         <div className="toolbar">
           <button className="accent" disabled={!lines.length || !generation.current || busy} onClick={() => void beginTiming()}>Start line timing</button>
           <button disabled={!lines.length || !generation.current || busy} onClick={() => void beginWordTiming()}>Start word timing</button>
@@ -398,7 +477,7 @@ export function App() {
             <span className="time">{seconds(line.startSeconds)}</span>
             <input aria-label={'Lyric line ' + (index + 1)} value={line.text} onChange={event => updateLine(line.id, { text: event.target.value })} />
           </div>)}
-          {!lines.length && <p className="muted">Import an LRC, SRT or JSON file, or paste lyrics in the left panel.</p>}
+          {!lines.length && <p className="muted">Import lyrics or paste them in the left panel.</p>}
         </div>
         {lines.length > 0 && <div className="stack">
           {lines.map((line, index) => <div className="cue-block" key={line.id + '-times'}>
@@ -430,7 +509,7 @@ export function App() {
         {error && <p className="error" role="alert">{error}</p>}
       </section>
     </main>
-    <footer className="footer"><span>Prototype 0.3.0 · Processing stays on this computer</span><span>TPV Kit · timed lyrics · local stems</span></footer>
+    <footer className="footer"><span>Prototype {version}</span><span>TPV Kit · timed lyrics · local stems</span></footer>
     {settingsOpen && <div className="settings" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
       <section className="settings-card" role="dialog" aria-modal="true" aria-labelledby="preferences-title">
         <div className="row spaced"><h2 id="preferences-title">Studio Preferences</h2><button onClick={() => setSettingsOpen(false)}>Close</button></div>

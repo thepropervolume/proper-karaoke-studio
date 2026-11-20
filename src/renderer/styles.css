@@ -11,7 +11,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 .topbar { display: flex; align-items: center; gap: 14px; padding: 0 20px; border-bottom: 1px solid #383047; background: #1d172b; }
 .brand-mark { width: 36px; height: 36px; border: 2px solid #601ce9; border-radius: 11px; display: grid; place-items: center; font-weight: 700; color: white; box-shadow: inset -8px 0 #0eb7ff; }
 .brand-title { font-weight: 700; white-space: nowrap; }
-.project-name { margin-left: auto; width: 200px; }
+.topbar button { white-space: nowrap; }
+.project-name { flex: 1 1 200px; min-width: 60px; width: 200px; }
 .main-grid { min-height: 0; display: grid; grid-template-columns: 300px minmax(400px, 1fr) 360px; }
 .panel { min-height: 0; padding: 20px; border-right: 1px solid #383047; overflow: auto; }
 .panel:last-child { border: 0; }

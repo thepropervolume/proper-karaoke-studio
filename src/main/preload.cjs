@@ -2,6 +2,9 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('studio', {
   getSettings: () => ipcRenderer.invoke('studio:get-settings'),
   saveSettings: value => ipcRenderer.invoke('studio:save-settings', value),
+  initialProject: () => ipcRenderer.invoke('studio:initial-project'),
+  openProject: () => ipcRenderer.invoke('studio:open-project'),
+  saveProject: (project, opened) => ipcRenderer.invoke('studio:save-project', { project, opened }),
   getPathForFile: file => webUtils.getPathForFile(file),
   registerMedia: filePath => ipcRenderer.invoke('studio:register-media', filePath),
   chooseAudioFiles: () => ipcRenderer.invoke('studio:choose-audio'),

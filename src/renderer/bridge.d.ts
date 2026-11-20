@@ -1,9 +1,13 @@
-export {};
+import type { StudioProject } from '../domain/project';
 declare global {
   type StudioSettings = { ffmpegPath: string; separatorExecutable: string; separatorModel: string; lyricAlignerExecutable: string; alignmentLanguage: string };
   type ExportStem = { path: string; name: string; role: string; voice: string; volume: number };
+  type OpenedStudioProject = { file: string; project: StudioProject; revision: string };
   type StudioBridge = {
     getSettings(): Promise<StudioSettings>; saveSettings(settings: StudioSettings): Promise<StudioSettings>;
+    initialProject(): Promise<OpenedStudioProject | null>;
+    openProject(): Promise<OpenedStudioProject | null>;
+    saveProject(project: StudioProject, opened?: { file: string; revision: string }): Promise<OpenedStudioProject | null>;
     getPathForFile(file: File): string; registerMedia(filePath: string): Promise<string>;
     chooseAudioFiles(): Promise<string[]>; chooseImageFile(): Promise<string | null>;
     saveText(input: { name: string; extension: string; content: string }): Promise<string | null>;

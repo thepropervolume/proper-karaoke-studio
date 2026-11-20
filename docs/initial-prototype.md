@@ -1,6 +1,6 @@
 # Prototype scope
 
-Version 0.3.0 imports local stems, previews them through the Karaoke Booth Web Audio renderer, force-aligns user-supplied lyrics locally with WhisperX, captures line or word-level timing manually, and exports an MP4 or TPV kit. Studio uses one editor mode rather than separate basic and advanced modes. AI alignment never discovers or transcribes lyric text; it only assigns timestamps to the supplied words.
+Version 0.4.0 imports and previews local stems, aligns supplied lyrics with WhisperX, captures line or word timing manually, and exports an MP4 or TPV kit. Studio has one editor and shares editable projects with the [CLI](cli.md). The CLI can download lyrics through the user's local TPV ktools installation.
 
 ## Available
 
@@ -11,6 +11,7 @@ Version 0.3.0 imports local stems, previews them through the Karaoke Booth Web A
 - Package project data, audio stems, lyrics, and an optional original CD+G source into a TPV kit.
 - Configure local FFmpeg and Audio Separator executable/model.
 - Adjust every imported stem's gain independently in the live preview and final mix.
+- Open and save editable project files in the desktop app, or automate edits and exports from the CLI.
 
 ## Limits to address
 
