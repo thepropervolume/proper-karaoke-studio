@@ -104,6 +104,7 @@ export function App() {
     ffmpegPath: 'ffmpeg', separatorAdapter: 'audio-separator', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx',
     lyricAlignerExecutable: '', alignmentLanguage: 'en',
   });
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false), [busy, setBusy] = useState(false);
   const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
   const [cdgPath, setCdgPath] = useState<string | null>(null);
@@ -141,7 +142,8 @@ export function App() {
         setPlaying(false);
       }
     } });
-    void window.studio.getSettings().then(setSettings).catch(cause => setError(String(cause)));
+    void window.studio.getSettings().then(setSettings).catch(cause => setError(String(cause)))
+      .finally(() => setSettingsLoaded(true));
     const timer = window.setInterval(() => {
       const snapshot = player.current?.snapshot();
       if (snapshot) { setPosition(snapshot.position); setDuration(snapshot.duration); setPlaying(snapshot.status === 'playing'); }
@@ -967,7 +969,8 @@ export function App() {
         {recoveryError && <p className="error" role="alert">{recoveryError}</p>}
       </section>
     </div>}
-    {settingsOpen && <PreferencesDialog settings={settings} close={() => setSettingsOpen(false)} onSave={value => {
+    {/* The dialog takes a draft snapshot when it opens, so wait for saved settings on startup. */}
+    {settingsOpen && settingsLoaded && <PreferencesDialog settings={settings} close={() => setSettingsOpen(false)} onSave={value => {
       setSettings(value); setSettingsOpen(false); setStatus('Preferences saved.');
     }} />}
   </div>;
