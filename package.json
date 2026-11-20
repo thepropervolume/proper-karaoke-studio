@@ -1,6 +1,6 @@
 {
   "name": "proper-karaoke-studio",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "author": {
@@ -61,7 +61,10 @@
     "win": {
       "icon": "assets/branding/app.ico",
       "extraFiles": [
-        { "from": "dist-electron/windows-cli/tpv-karaoke-studio.exe", "to": "cli/tpv-karaoke-studio.exe" }
+        {
+          "from": "dist-electron/windows-cli/tpv-karaoke-studio.exe",
+          "to": "cli/tpv-karaoke-studio.exe"
+        }
       ],
       "target": [
         "nsis",
@@ -85,7 +88,9 @@
       ]
     },
     "deb": {
-      "fpm": ["scripts/linux/tpv-karaoke-studio=/usr/bin/tpv-karaoke-studio"]
+      "fpm": [
+        "scripts/linux/tpv-karaoke-studio=/usr/bin/tpv-karaoke-studio"
+      ]
     },
     "mac": {
       "icon": "assets/branding/app.icns",

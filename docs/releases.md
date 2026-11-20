@@ -8,6 +8,8 @@ Studio preview installers are served from [the Studio download page](https://rel
 - On Linux x64, install the Debian package on a compatible system or make the AppImage executable and launch it.
 - On macOS, choose Apple silicon for an M-series Mac or Intel for an Intel Mac. Open the DMG and move the app into Applications. Studio previews are currently unsigned for distribution.
 
+The Windows installer registers `tpv-karaoke-studio` on PATH for the selected installation scope. Open a new terminal after setup. The Debian package adds the command under `/usr/bin`. Portable and drag-and-drop builds can run the CLI from the application folder. See the [CLI guide](cli.md).
+
 Keep project media beside your editable project or back it up in a TPV kit before switching machines. On supported platforms, Studio sets up its AI Sync runtime on demand. Local stem separation and video export use separately installed tools.
 
 ## Build locally
