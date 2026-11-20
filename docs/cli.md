@@ -32,6 +32,24 @@ Import a CD+G source with `lyrics import <file.cdg>`. Add its matching audio wit
 
 To import a timed lyric JSON file from another application, supply a [field mapping](json-lyric-import.md) with `lyrics import <file.json> --mapping <mapping.json>`. Studio lyrics JSON exports can be imported directly.
 
+## Set up local lyric sync
+
+The desktop app and CLI share the managed lyric runtime. The first `lyrics align` installs it on supported platforms, or set it up in advance:
+
+    tpv-studio lyrics setup
+    tpv-studio lyrics setup --status
+    tpv-studio lyrics languages
+
+Use `--language en` to select a language for one run. The first alignment in each language downloads its acoustic model. To use a compatible external environment, supply `--python <executable>` or set the CLI's `lyricAlignerExecutable`. The current managed CPU runtime supports Windows x64, Linux x64, and Apple silicon Mac.
+
+## List separation models and use cloud separation
+
+    tpv-studio stems models --adapter audio-separator
+    tpv-studio stems models --adapter dango
+    tpv-studio stems separate "Original Song.wav" --adapter dango --output-dir "./stems" --approve-cloud
+
+For Dango, supply `DANGO_APP_KEY` and `DANGO_APP_SECRET` through the environment. `--approve-cloud` authorizes uploading the named file and using Dango credits for that job. The desktop editor manages its credentials separately.
+
 ## Download lyrics with ktools
 
 By default Studio checks `~/Dropbox/Audio/Karaoke/Tools/ktools` and, on macOS, `~/Library/CloudStorage/Dropbox/Audio/Karaoke/Tools/ktools`. Set `TPV_KTOOLS_HOME` or pass `--ktools-home <directory>` for another location. Set `TPV_KTOOLS_PYTHON` or `--python <executable>` if the tool uses a separate Python environment. Source credentials used by ktools are configured through ktools.
@@ -48,7 +66,6 @@ Supply `--album` or `--duration` to help distinguish versions. ktools chooses th
 Commands return structured JSON. Use `--json` for compact output and JSON errors on stderr. Exit code `0` means success, `2` means a command or option syntax error, and `1` means the operation failed. Exports preserve existing files unless you pass `--force`.
 
     tpv-studio settings show
-    tpv-studio settings set lyricAlignerExecutable "C:\Tools\StudioPython\Scripts\python.exe"
     tpv-studio settings set alignmentLanguage en
 
 `settings show` displays the file used by the CLI. Its default profile is separate from the desktop editor. To use a specific settings file, pass `--settings <file>`. Command-specific options override the stored tool settings for a single run.

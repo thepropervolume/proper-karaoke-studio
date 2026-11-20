@@ -10,6 +10,7 @@ import { WaveformTimeline } from './WaveformTimeline';
 import { StudioIcon, type StudioIconName } from './StudioIcon';
 import { WorkspaceSeparator, defaultInspectorWidth, inspectorMax, minInspectorWidth } from './WorkspaceSeparator';
 import { VoiceRecorder } from './VoiceRecorder';
+import { PreferencesDialog, preferenceError } from './PreferencesDialog';
 import { version } from '../../package.json';
 import markDark from '../../assets/branding/icon-dark.svg';
 import markLight from '../../assets/branding/icon-light.svg';
@@ -101,7 +102,7 @@ export function App() {
   const [error, setError] = useState('');
   const [settings, setSettings] = useState<StudioSettings>({
     ffmpegPath: 'ffmpeg', separatorAdapter: 'audio-separator', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx',
-    lyricAlignerExecutable: 'python', alignmentLanguage: 'en',
+    lyricAlignerExecutable: '', alignmentLanguage: 'en',
   });
   const [settingsOpen, setSettingsOpen] = useState(false), [busy, setBusy] = useState(false);
   const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
@@ -391,10 +392,11 @@ export function App() {
     if (!source?.path) { setError('Choose an audio file with a local path for lyric synchronization.'); return; }
     if (!lines.length) { setError('Add or import the lyrics before synchronizing.'); return; }
     const lyricsAtStart = JSON.stringify(lines);
-    setBusy(true); setError(''); setStatus('Aligning the supplied lyrics to audio locally. The first run downloads the alignment model…');
+    setBusy(true); setError(''); setStatus('Preparing AI Sync…');
+    const stopProgress = window.studio.onAlignmentProgress(progress => setStatus(progress.message));
     try {
       const result = await window.studio.alignLyrics({
-        audioPath: source.path, executable: settings.lyricAlignerExecutable,
+        audioPath: source.path,
         language: settings.alignmentLanguage, lyrics: lines.map(line => line.text),
       });
       if (JSON.stringify(linesRef.current) !== lyricsAtStart) throw new Error('The lyric cues changed while synchronization was running. The new timings were discarded; run synchronization again.');
@@ -403,9 +405,9 @@ export function App() {
       setDuration(Math.max(duration, result.duration));
       setStatus(`Synchronized ${result.words.length} supplied lyric words. Review the cues and adjust any mismatches.`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(preferenceError(cause));
       setStatus('Lyric synchronization did not finish. Existing lyric text and timing were kept.');
-    } finally { setBusy(false); }
+    } finally { stopProgress(); setBusy(false); }
   };
   const tapLine = () => {
     if (nextLine >= lines.length) return;
@@ -503,19 +505,17 @@ export function App() {
     const file = await window.studio.saveText({ name: safeName(title), extension: format === 'lrc' ? 'lrc' : format, content });
     if (file) setStatus('Saved ' + file.split(/[\\/]/).at(-1) + '.');
   };
-  const saveSettings = async () => {
-    try { setSettings(await window.studio.saveSettings(settings)); setSettingsOpen(false); setStatus('Preferences saved.'); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-  };
   const separate = async () => {
     const source = stems.find(stem => stem.path)?.path;
     if (!source) { setError('Import a local audio file before running stem separation.'); return; }
-    setBusy(true); setError(''); setStatus('Separating audio with the selected local model…');
+    setBusy(true); setError('');
+    setStatus(settings.separatorAdapter === 'dango' ? 'Preparing Dango stem separation…' : 'Separating audio with the selected local model…');
     try {
       const result = await window.studio.separate({ sourcePath: source, adapter: settings.separatorAdapter, executable: settings.separatorExecutable, model: settings.separatorModel });
+      if (!result.files.length) { setStatus('Stem separation canceled.'); return; }
       await addLocalPaths(result.files);
       setStatus('Separated audio saved to ' + result.outputDirectory + '.');
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); setStatus('Stem separation did not finish.'); }
+    } catch (cause) { setError(preferenceError(cause)); setStatus('Stem separation did not finish.'); }
     finally { setBusy(false); }
   };
   const chooseBackground = async () => {
@@ -967,39 +967,8 @@ export function App() {
         {recoveryError && <p className="error" role="alert">{recoveryError}</p>}
       </section>
     </div>}
-    {settingsOpen && <div className="settings" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
-      <section className="settings-card" role="dialog" aria-modal="true" aria-labelledby="preferences-title" onKeyDown={event => {
-        if (event.key === 'Escape') setSettingsOpen(false);
-      }}>
-        <div className="row spaced"><h2 id="preferences-title">Studio Preferences</h2><button autoFocus onClick={() => setSettingsOpen(false)}>Close</button></div>
-        <div className="stack">
-          <div className="settings-group">
-          <h3>Video Rendering</h3>
-          <label className="field-label">FFmpeg executable<input value={settings.ffmpegPath} onChange={event => setSettings({ ...settings, ffmpegPath: event.target.value })} /></label>
-          </div>
-          <div className="settings-group">
-          <h3>Stem Separation</h3>
-          <label className="field-label">Stem separator
-            <select value={settings.separatorAdapter} onChange={event => {
-              const adapter = event.target.value as SeparatorAdapter;
-              setSettings({ ...settings, separatorAdapter: adapter, separatorExecutable: adapter,
-                separatorModel: adapter === 'demucs' ? 'htdemucs' : 'UVR-MDX-NET-Inst_HQ_3.onnx' });
-            }}>
-              <option value="audio-separator">Audio Separator (UVR)</option>
-              <option value="demucs">Demucs</option>
-            </select>
-          </label>
-          <label className="field-label">Stem separation executable<input value={settings.separatorExecutable} onChange={event => setSettings({ ...settings, separatorExecutable: event.target.value })} /></label>
-          <label className="field-label">Stem separation model<input value={settings.separatorModel} onChange={event => setSettings({ ...settings, separatorModel: event.target.value })} /></label>
-          </div>
-          <div className="settings-group">
-          <h3>Lyric Synchronization</h3>
-          <label className="field-label">Lyric alignment Python executable<input value={settings.lyricAlignerExecutable} onChange={event => setSettings({ ...settings, lyricAlignerExecutable: event.target.value })} /><span className="muted">Use the path to your WhisperX Python 3.10–3.13 environment.</span></label>
-          <label className="field-label">Lyric language code (for example, en)<input value={settings.alignmentLanguage} onChange={event => setSettings({ ...settings, alignmentLanguage: event.target.value })} /></label>
-          </div>
-        </div>
-        <div className="row spaced"><div className="toolbar"><a href="https://github.com/nomadkaraoke/python-audio-separator" target="_blank" rel="noreferrer">Audio Separator setup</a><a href="https://github.com/m-bain/whisperX" target="_blank" rel="noreferrer">WhisperX setup</a></div><button className="primary" onClick={() => void saveSettings()}>Save Preferences</button></div>
-      </section>
-    </div>}
+    {settingsOpen && <PreferencesDialog settings={settings} close={() => setSettingsOpen(false)} onSave={value => {
+      setSettings(value); setSettingsOpen(false); setStatus('Preferences saved.');
+    }} />}
   </div>;
 }

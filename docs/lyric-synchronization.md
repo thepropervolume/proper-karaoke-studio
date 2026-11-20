@@ -1,28 +1,26 @@
 # Local AI lyric synchronization
 
-Studio aligns lyrics that the user has already imported or typed. It does not search for lyrics, transcribe the song, or replace the supplied text.
+Studio aligns the lyrics you provide to your audio. The displayed words and line breaks come from your project.
 
 ## Setup
 
-Install Python 3.10–3.13 and WhisperX in the environment Studio will use. Current WhisperX releases require Python 3.10 through 3.13:
+Choose **Set Up Lyric Sync** in Studio or start your first **AI Sync**. Studio downloads a compatible Python 3.13 environment and WhisperX with its audio tools. The installation resides in your Studio app data and leaves the system Python and PATH alone.
 
-```bash
-python -m pip install whisperx
-```
+The first setup needs an internet connection and several minutes for the package downloads. Your first sync in a language also downloads its acoustic model. Studio runs alignment on your computer. The managed environment uses CPU inference on Windows x64, Linux x64, and Apple silicon Mac.
 
-Set the Python executable (the full path if needed) and lyric language code in Studio Preferences. CUDA is used when available; CPU is the fallback. On the first alignment for a language, WhisperX downloads its acoustic alignment model. The models are language-specific.
+Choose an alignment language in Studio Preferences. The CLI also accepts **--python** if you maintain a compatible external environment. The PyTorch versions needed for managed setup have no official Intel Mac wheels.
 
 ## Use
 
 1. Import the song audio and add or import its lyrics.
-2. Choose the audio file to align against. A clear lead-vocal track generally works best; full mixes may need more manual correction.
-3. Select **Sync supplied lyrics with AI** and review the resulting word cues.
-4. Correct any timing by editing the cue sheet or using manual timing tools, then export.
+2. Choose the audio file to align against. A clear lead vocal track generally works best.
+3. Select **AI Sync** and review the resulting word cues.
+4. Correct timings in the cue sheet or with its manual timing tools before exporting.
 
-If a word cannot be aligned or the returned text does not match the supplied words, Studio reports an error and keeps existing timings. Audio and lyrics remain local. WhisperX alignment models are speech-oriented, so sung vocal timing must be reviewed before publication.
+If the returned word timings cannot be matched back to your lines, Studio reports the issue and preserves your previous timing. WhisperX models were trained for speech. Review the result against the song, especially for overlapping voices or long sustained notes.
 
-## Implementation boundary
+## Implementation
 
-The Python adapter calls `load_audio`, `load_align_model`, and `align` only. It deliberately does not invoke WhisperX's `transcribe` function. The UI sends the user's existing lyric lines, while the renderer maps returned timestamps back onto the original tokens and preserves punctuation, whitespace, and line breaks.
+The adapter decodes audio through PyAV, then loads and calls the WhisperX alignment model. Studio maps the resulting timestamps to the supplied words and punctuation.
 
-See the [WhisperX installation and usage guide](https://github.com/m-bain/whisperX) for platform-specific dependency notes and supported alignment languages.
+Studio uses a checksum-verified [uv release](https://github.com/astral-sh/uv/releases/tag/0.13.7) for private Python setup and pins the [WhisperX release](https://github.com/m-bain/whisperX/releases/tag/v3.7.9) used by managed alignment.

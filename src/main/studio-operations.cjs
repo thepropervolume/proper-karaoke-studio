@@ -8,14 +8,21 @@ const { pipeline } = require('node:stream/promises');
 const yazl = require('yazl');
 const { CdgPlayer, cdgByteLimit, cdgHeight, cdgPacketBytes, cdgWidth } = require('../domain/cdg.ts');
 const { CdgEncoder, cdgExportFrameRate, cdgRgbFrameBytes } = require('../domain/cdg-encode.ts');
+const { alignmentLanguages, separatorModels } = require('../domain/studio-options.json');
 
 const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.aiff', '.wma']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 const separationDefaults = {
   'audio-separator': { executable: 'audio-separator', model: 'UVR-MDX-NET-Inst_HQ_3.onnx' },
   demucs: { executable: 'demucs', model: 'htdemucs' },
+  dango: { executable: '', model: '29' },
 };
-const defaultSettings = { ffmpegPath: 'ffmpeg', separatorAdapter: 'audio-separator', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx', lyricAlignerExecutable: process.platform === 'win32' ? 'python' : 'python3', alignmentLanguage: 'en' };
+const defaultSettings = { ffmpegPath: 'ffmpeg', separatorAdapter: 'audio-separator', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx', lyricAlignerExecutable: '', alignmentLanguage: 'en' };
+
+function supportedAlignmentLanguage(value) {
+  const base = typeof value === 'string' ? value.trim().toLowerCase().split('-')[0] : '';
+  return alignmentLanguages.includes(base) ? base : '';
+}
 
 function text(input, field, max = 500) {
   if (typeof input !== 'string' || input.length > max) throw new Error('Invalid ' + field + '.');
@@ -62,13 +69,13 @@ function loadSettings(file) {
       separatorExecutable: typeof value.separatorExecutable === 'string' ? value.separatorExecutable : separationDefaults[separatorAdapter].executable,
       separatorModel: typeof value.separatorModel === 'string' ? value.separatorModel : separationDefaults[separatorAdapter].model,
       lyricAlignerExecutable: typeof value.lyricAlignerExecutable === 'string' ? value.lyricAlignerExecutable : defaultSettings.lyricAlignerExecutable,
-      alignmentLanguage: typeof value.alignmentLanguage === 'string' ? value.alignmentLanguage : defaultSettings.alignmentLanguage,
+      alignmentLanguage: supportedAlignmentLanguage(value.alignmentLanguage) || defaultSettings.alignmentLanguage,
     };
   } catch { return { ...defaultSettings }; }
 }
 function saveSettings(file, value) {
   const separatorAdapter = value?.separatorAdapter ?? defaultSettings.separatorAdapter;
-  if (!Object.hasOwn(separationDefaults, separatorAdapter)) throw new Error('Choose Audio Separator or Demucs.');
+  if (!Object.hasOwn(separationDefaults, separatorAdapter)) throw new Error('Choose a supported stem separator.');
   const result = {
     ffmpegPath: text(value?.ffmpegPath, 'FFmpeg executable', 4096).trim() || 'ffmpeg',
     separatorAdapter,
@@ -77,8 +84,10 @@ function saveSettings(file, value) {
     lyricAlignerExecutable: text(value?.lyricAlignerExecutable, 'Python executable', 4096).trim() || defaultSettings.lyricAlignerExecutable,
     alignmentLanguage: text(value?.alignmentLanguage, 'alignment language', 16).trim() || 'en',
   };
-  if (!/^[\w.-]+$/.test(result.separatorModel)) throw new Error('Model names may contain letters, digits, dots, underscores, and hyphens.');
-  if (!/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/.test(result.alignmentLanguage)) throw new Error('Use a language code such as en, es, or fr.');
+  if (!/^(?!\.{1,2}$)[\w.-]+$/.test(result.separatorModel)) throw new Error('Model names may contain letters, digits, dots, underscores, and hyphens.');
+  if (separatorAdapter === 'dango' && !separatorModels.dango.some(model => model.id === result.separatorModel)) throw new Error('Choose an available Dango model.');
+  result.alignmentLanguage = supportedAlignmentLanguage(result.alignmentLanguage);
+  if (!result.alignmentLanguage) throw new Error('Choose a language supported by AI Sync.');
   mkdirSync(path.dirname(file), { recursive: true });
   const temporary = file + '.' + randomUUID() + '.tmp';
   try {
@@ -253,7 +262,7 @@ async function exportVideo(input, destination, overwrite = true) {
 async function separate(input, directory) {
   const source = await localFile(input?.sourcePath, AUDIO_EXTENSIONS);
   const adapter = input.adapter ?? defaultSettings.separatorAdapter;
-  if (!Object.hasOwn(separationDefaults, adapter)) throw new Error('Choose Audio Separator or Demucs.');
+  if (adapter !== 'audio-separator' && adapter !== 'demucs') throw new Error('Choose Audio Separator or Demucs for local separation.');
   const executable = text(input.executable ?? separationDefaults[adapter].executable, 'separator executable', 4096).trim();
   const model = text(input.model ?? separationDefaults[adapter].model, 'model name', 160).trim();
   if (!executable || model === '.' || model === '..' || !/^[\w.-]+$/.test(model)) throw new Error('Configure a valid executable and model name in Preferences.');
@@ -272,13 +281,14 @@ async function separate(input, directory) {
   return { files, outputDirectory };
 }
 
-async function alignLyrics(input, scriptPath) {
-  const source = await localFile(input?.audioPath, AUDIO_EXTENSIONS);
-  const executable = text(input?.executable, 'Python executable', 4096).trim();
-  const language = text(input?.language, 'alignment language', 16).trim();
+async function alignLyrics(input, scriptPath, prepareExecutable) {
+  const language = supportedAlignmentLanguage(text(input?.language, 'alignment language', 16));
   const lyrics = input?.lyrics;
-  if (!executable || !/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/.test(language)) throw new Error('Configure a Python executable and valid language code in Preferences.');
-  if (!Array.isArray(lyrics) || !lyrics.length || lyrics.length > 500 || lyrics.some(line => typeof line !== 'string' || line.length > 2000) || JSON.stringify(lyrics).length > 256 * 1024) throw new Error('Provide up to 500 lyric lines (maximum 256 KB total).');
+  if (!language) throw new Error('Choose a language supported by AI Sync.');
+  if (!Array.isArray(lyrics) || !lyrics.length || lyrics.length > 500 || lyrics.some(line => typeof line !== 'string' || line.length > 2000) || Buffer.byteLength(JSON.stringify(lyrics)) > 256 * 1024) throw new Error('Provide up to 500 lyric lines (maximum 256 KB total).');
+  const source = await localFile(input?.audioPath, AUDIO_EXTENSIONS);
+  const executable = text(prepareExecutable ? await prepareExecutable() : input?.executable, 'AI Sync runtime', 4096).trim();
+  if (!executable) throw new Error('The AI Sync runtime is unavailable.');
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tpv-align-'));
   const inputPath = path.join(tempDir, 'lyrics.json'), outputPath = path.join(tempDir, 'aligned.json');
   try {

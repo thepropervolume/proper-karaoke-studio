@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, protocol, systemPreferences } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, shell, systemPreferences } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -8,6 +8,11 @@ const { loadProject, projectRevision, saveProject } = require('../domain/project
 const { createRecoveryStore } = require('./recovery.cjs');
 const { importKit } = require('./kit-import.cjs');
 const { serveStudioMedia } = require('./media-protocol.cjs');
+const { alignmentRuntimeRoot, alignmentRuntimeStatus, ensureAlignmentRuntime } = require('./alignment-runtime.cjs');
+const { discoverModels } = require('./separator-models.cjs');
+const { createIntegrationCatalog } = require('./integration-catalog.cjs');
+const { createIntegrationSecrets } = require('./integration-secrets.cjs');
+const { checkDangoConnection, normalizeDangoCredentials, separateWithDango } = require('./dango-separator.cjs');
 
 // Files are served to the renderer through random one-session URLs, never file:// URLs.
 protocol.registerSchemesAsPrivileged([{
@@ -33,6 +38,49 @@ function isEditorContents(contents, url) {
 
 function isEditorFrame(event) {
   return event.senderFrame === event.sender.mainFrame && isEditorContents(event.sender, event.senderFrame?.url);
+}
+
+function handleEditor(channel, action) {
+  ipcMain.handle(channel, (event, input) => {
+    if (!isEditorFrame(event)) throw new Error('Only the Studio editor can perform this action.');
+    return action(event, input);
+  });
+}
+
+function alignmentProgress(event) {
+  return progress => {
+    if (!event.sender.isDestroyed()) event.sender.send('studio:alignment-progress', progress);
+  };
+}
+
+function registerIntegrations(directory) {
+  const secrets = createIntegrationSecrets({ directory: path.join(directory, 'keys'), safeStorage });
+  const catalog = createIntegrationCatalog({ directory, secrets });
+  const dangoId = 'dango-ai';
+  const dangoCredentials = async () => {
+    const saved = await catalog.readKey(dangoId);
+    if (!saved) throw new Error('Add your Dango App Key and App Secret in Preferences → Integrations.');
+    try { return normalizeDangoCredentials(JSON.parse(saved)); }
+    catch { throw new Error('The saved Dango credentials could not be read. Replace them in Preferences → Integrations.'); }
+  };
+
+  handleEditor('studio:list-integrations', () => catalog.list());
+  handleEditor('studio:add-integration', (_event, input) => catalog.add(input));
+  handleEditor('studio:remove-integration', (_event, id) => catalog.remove(id));
+  handleEditor('studio:save-integration-key', (_event, input) => {
+    const key = input?.id === dangoId
+      ? JSON.stringify(normalizeDangoCredentials({ appKey: input.appKey, appSecret: input.key }))
+      : input?.key;
+    return catalog.setKey(input?.id, key);
+  });
+  handleEditor('studio:remove-integration-key', (_event, id) => catalog.removeKey(id));
+  handleEditor('studio:verify-dango', async () => checkDangoConnection(await dangoCredentials()));
+  handleEditor('studio:integration-website', async (_event, id) => {
+    const entry = (await catalog.list()).find(integration => integration.id === id);
+    if (!entry?.website) throw new Error('This integration has no website.');
+    await shell.openExternal(entry.website);
+  });
+  return dangoCredentials;
 }
 
 function configurePermissions(session) {
@@ -91,9 +139,16 @@ async function chooseSave(defaultPath, name, extension) {
 app.whenReady().then(() => {
   if (process.platform === 'win32') app.setAppUserModelId('com.thepropervolume.karaokestudio');
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(brandIcon());
+  const dangoCredentials = registerIntegrations(path.join(app.getPath('userData'), 'integrations'));
   protocol.handle('studio-media', request => serveStudioMedia(request, media.get(new URL(request.url).hostname)));
   ipcMain.handle('studio:get-settings', () => loadSettings(settingsPath()));
   ipcMain.handle('studio:save-settings', (_event, value) => saveSettings(settingsPath(), value));
+  handleEditor('studio:separator-models', (_event, input) => discoverModels(input));
+  handleEditor('studio:alignment-status', () => alignmentRuntimeStatus(alignmentRuntimeRoot()));
+  handleEditor('studio:install-alignment', async event => {
+    await ensureAlignmentRuntime(alignmentRuntimeRoot(), alignmentProgress(event));
+    return alignmentRuntimeStatus(alignmentRuntimeRoot());
+  });
   ipcMain.handle('studio:recovery-start', async () => {
     // A restarted renderer adopts a fresh draft, leaving its prior edits available.
     await recovery.flush().catch(error => console.error('Could not save the previous recovery draft:', error));
@@ -191,14 +246,42 @@ app.whenReady().then(() => {
     if (!destination) return null;
     return exportVideo(input, destination);
   });
-  ipcMain.handle('studio:separate', async (_event, input) => {
-    const selected = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory', 'createDirectory'] });
-    if (selected.canceled || !selected.filePaths[0]) return { files: [], outputDirectory: '' };
-    return separate(input, selected.filePaths[0]);
+  let separationBusy = false;
+  handleEditor('studio:separate', async (event, input) => {
+    if (separationBusy) throw new Error('Stem separation is already running.');
+    separationBusy = true;
+    try {
+      const cloud = input?.adapter === 'dango';
+      const credentials = cloud ? await dangoCredentials() : null;
+      const source = await localFile(input?.sourcePath, cloud ? new Set(['.wav', '.mp3', '.flac']) : AUDIO_EXTENSIONS);
+      const canceled = { files: [], outputDirectory: '' };
+      const destination = await dialog.showOpenDialog(mainWindow, {
+        title: 'Choose a Folder for Separated Stems', properties: ['openDirectory', 'createDirectory'],
+      });
+      const outputDirectory = destination.filePaths[0];
+      if (destination.canceled || !outputDirectory || !isEditorFrame(event)) return canceled;
+      if (!credentials) return await separate({ ...input, sourcePath: source }, outputDirectory);
+
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'warning', buttons: ['Cancel', 'Upload and Separate'], defaultId: 0, cancelId: 0,
+        title: 'Dango AI Stem Separation', message: 'Upload ' + path.basename(source) + ' to Dango AI?',
+        detail: 'Dango processes the selected audio in the cloud. This job may use credits in your Dango account.',
+      });
+      if (response !== 1 || !isEditorFrame(event)) return canceled;
+      return await separateWithDango({ credentials, sourcePath: source, outputDirectory, model: input.model });
+    } finally { separationBusy = false; }
   });
-  ipcMain.handle('studio:align-lyrics', (_event, input) => alignLyrics(input, app.isPackaged
-    ? path.join(process.resourcesPath, 'scripts', 'align_lyrics.py')
-    : path.join(app.getAppPath(), 'scripts', 'align_lyrics.py')));
+  handleEditor('studio:align-lyrics', (event, input) => {
+    const script = app.isPackaged
+      ? path.join(process.resourcesPath, 'scripts', 'align_lyrics.py')
+      : path.join(app.getAppPath(), 'scripts', 'align_lyrics.py');
+    const report = alignmentProgress(event);
+    return alignLyrics(input, script, async () => {
+      const executable = await ensureAlignmentRuntime(alignmentRuntimeRoot(), report);
+      report({ phase: 'aligning', message: 'Synchronizing lyrics locally. The first run downloads the language model…' });
+      return executable;
+    });
+  });
   createWindow();
 });
 

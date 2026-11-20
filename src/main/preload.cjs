@@ -2,6 +2,21 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('studio', {
   getSettings: () => ipcRenderer.invoke('studio:get-settings'),
   saveSettings: value => ipcRenderer.invoke('studio:save-settings', value),
+  getSeparatorModels: input => ipcRenderer.invoke('studio:separator-models', input),
+  getAlignmentStatus: () => ipcRenderer.invoke('studio:alignment-status'),
+  installAlignment: () => ipcRenderer.invoke('studio:install-alignment'),
+  onAlignmentProgress: listener => {
+    const onProgress = (_event, progress) => listener(progress);
+    ipcRenderer.on('studio:alignment-progress', onProgress);
+    return () => ipcRenderer.removeListener('studio:alignment-progress', onProgress);
+  },
+  listIntegrations: () => ipcRenderer.invoke('studio:list-integrations'),
+  addIntegration: input => ipcRenderer.invoke('studio:add-integration', input),
+  removeIntegration: id => ipcRenderer.invoke('studio:remove-integration', id),
+  saveIntegrationKey: input => ipcRenderer.invoke('studio:save-integration-key', input),
+  removeIntegrationKey: id => ipcRenderer.invoke('studio:remove-integration-key', id),
+  verifyDango: () => ipcRenderer.invoke('studio:verify-dango'),
+  openIntegrationWebsite: id => ipcRenderer.invoke('studio:integration-website', id),
   startRecovery: () => ipcRenderer.invoke('studio:recovery-start'),
   updateRecovery: draft => ipcRenderer.invoke('studio:recovery-update', draft),
   listRecovery: () => ipcRenderer.invoke('studio:recovery-list'),

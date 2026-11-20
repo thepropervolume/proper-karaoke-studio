@@ -382,6 +382,19 @@ a { color: var(--accent); }
 .settings-card .settings-group { display: grid; gap: 9px; }
 .settings-group + .settings-group { padding-top: 12px; border-top: 1px solid var(--line); }
 .settings-group h3 { margin: 0; font-size: 16px; }
+.preferences-card { width: min(800px, 92vw); }
+.preferences-nav { margin-top: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.preferences-nav button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.preferences-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.preferences-fields select { min-width: 0; }
+.preferences-details summary { cursor: pointer; font-weight: 650; }
+.preferences-details[open] summary { margin-bottom: 8px; }
+.preferences-details[open] label + label { margin-top: 8px; }
+.preferences-integration { padding: 14px; border: 1px solid var(--line); border-radius: 10px; }
+.preferences-integration h3, .preferences-card .stack > .row > h3 { margin: 0; }
+.preferences-integration p { margin: 8px 0; }
+.preferences-integration .toolbar { flex-wrap: wrap; }
+.preference-actions { justify-content: flex-end; }
 .appearance-card { width: min(430px, 92vw); }
 .appearance-fields { display: grid; gap: 12px; margin-top: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .voice-recorder::backdrop { background: #050914ba; }
