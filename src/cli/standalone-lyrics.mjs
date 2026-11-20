@@ -3,19 +3,18 @@ import path from 'node:path';
 import { applyForcedAlignment } from '../domain/forced-alignment.ts';
 import { newLyricLines } from '../domain/project.ts';
 import { parseLyricsFile, toLrc, toLyricsJson, toSrt } from '../domain/lyrics-formats.ts';
+import { formatLyricText, MAXIMUM_LYRIC_TEXT_BYTES, readTextForLyricFormat } from '../domain/lyric-format.ts';
 import { loadProject, projectRevision, projectSchema, saveProject } from '../domain/project-file.mjs';
 import operations from '../main/studio-operations.cjs';
 import { addProjectStems } from './project-commands.mjs';
 
-const maximumBytes = 4 * 1024 * 1024;
-const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-const sectionLabel = /^\[(?:verse|pre[ -]chorus|chorus|post[ -]chorus|bridge|intro|outro|hook|refrain|interlude|instrumental|solo|breakdown|break|coda)(?=\s|:|\d|\]).*\]$/i;
+export { formatLyricText };
 
 async function readLyricText(file) {
   const handle = await open(file, 'r');
   try {
     const info = await handle.stat();
-    if (!info.isFile() || !info.size || info.size > maximumBytes) throw new Error('Choose a nonempty lyric file of up to 4 MB.');
+    if (!info.isFile() || !info.size || info.size > MAXIMUM_LYRIC_TEXT_BYTES) throw new Error('Choose a nonempty lyric file of up to 4 MB.');
     const data = Buffer.alloc(info.size + 1);
     let length = 0;
     while (length < data.length) {
@@ -30,39 +29,6 @@ async function readLyricText(file) {
       return text;
     } catch { throw new Error('Save the lyrics as UTF-8 text and try again.'); }
   } finally { await handle.close(); }
-}
-
-function graphemeCount(text) {
-  let width = 0;
-  for (const _segment of segmenter.segment(text)) width++;
-  return width;
-}
-
-export function formatLyricText(source, width = 22) {
-  if (!Number.isInteger(width) || width < 8 || width > 160) throw new Error('--max-length must be a whole number from 8 to 160.');
-  const result = [];
-  let stanzaBreak = false;
-  for (const raw of source.split(/\r\n|\n|\r/)) {
-    const line = raw.trim();
-    if (!line || sectionLabel.test(line)) {
-      stanzaBreak ||= result.length > 0;
-      continue;
-    }
-    if (stanzaBreak) { result.push(''); stanzaBreak = false; }
-    let excerpt = '', length = 0;
-    for (const word of line.split(/\s+/u)) {
-      const count = graphemeCount(word);
-      if (excerpt && length + 1 + count > width) {
-        result.push(excerpt);
-        excerpt = ''; length = 0;
-      }
-      if (excerpt) { excerpt += ' '; length++; }
-      excerpt += word; length += count;
-    }
-    if (excerpt) result.push(excerpt);
-  }
-  if (!result.length) throw new Error('Provide at least one line of lyric text.');
-  return result.join('\n') + '\n';
 }
 
 async function sameFile(left, right) {
@@ -86,13 +52,15 @@ async function writeText(output, contents, overwrite, beforePublish) {
   });
 }
 
-export async function formatLyricsFile({ lyricsFile, output, width, force, preferences }) {
+export async function formatLyricsFile({ lyricsFile, output, formatting, width, candidate, force, preferences }) {
   const source = path.resolve(lyricsFile);
   const ext = path.extname(source).toLowerCase();
-  if (['.cdg', '.json', '.lrc', '.elrc', '.srt'].includes(ext)) throw new Error('Choose plain text lyrics for formatting.');
-  const original = await readLyricText(source);
-  const contents = formatLyricText(original, width);
   const inPlace = await sameFile(source, output);
+  if (inPlace && ['.json', '.lrc', '.elrc', '.srt'].includes(ext)) {
+    throw new Error('Choose a separate text output to preserve the original lyric file.');
+  }
+  const original = await readLyricText(source);
+  const contents = formatLyricText(readTextForLyricFormat(source, original, candidate), formatting ?? width);
   const destination = inPlace ? await realpath(source) : path.resolve(output);
   if (await sameFile(destination, preferences)) throw new Error('Choose an output different from the Studio settings file.');
   await writeText(destination, contents, inPlace || Boolean(force), inPlace ? async () => {
