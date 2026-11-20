@@ -1,3 +1,7 @@
+@font-face { font-family: 'Liberation Sans'; font-weight: 700; src: url('/lyric-fonts/LiberationSans-Bold.ttf') format('truetype'); }
+@font-face { font-family: 'Liberation Serif'; font-weight: 700; src: url('/lyric-fonts/LiberationSerif-Bold.ttf') format('truetype'); }
+@font-face { font-family: 'Liberation Mono'; font-weight: 700; src: url('/lyric-fonts/LiberationMono-Bold.ttf') format('truetype'); }
+
 :root {
   font-family: 'Nunito Sans', 'Avenir Next', Avenir, 'Segoe UI', sans-serif;
   font-synthesis: none;
@@ -395,6 +399,11 @@ a { color: var(--accent); }
 .preferences-integration p { margin: 8px 0; }
 .preferences-integration .toolbar { flex-wrap: wrap; }
 .preference-actions { justify-content: flex-end; }
+.lyric-appearance { width: min(560px, 92vw); display: grid; gap: 15px; }
+.lyric-appearance .preferences-fields { padding-top: 7px; }
+.lyric-color-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.lyric-color-grid input { height: 36px; padding: 3px; cursor: pointer; }
+.lyric-caps input { width: auto; height: auto; }
 .appearance-card { width: min(430px, 92vw); }
 .appearance-fields { display: grid; gap: 12px; margin-top: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .voice-recorder::backdrop { background: #050914ba; }

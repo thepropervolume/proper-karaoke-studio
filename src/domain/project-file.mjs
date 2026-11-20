@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { link, open, readFile, rename, rm } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
+import { normalizeLyricStyle } from './lyric-style.ts';
 
 export const projectSchema = 'com.thepropervolume.karaoke-studio';
 export const stemRoles = ['instrumental', 'lead', 'backing', 'other'];
@@ -96,6 +97,7 @@ export function validateProject(input, projectPath) {
     lyrics: distinctIds(lyrics, 'Lyric lines'),
     importedCdg: value.importedCdg == null ? null : mediaPath(value.importedCdg, 'CD+G source'),
     backgroundPath: value.backgroundPath == null ? null : mediaPath(value.backgroundPath, 'Backdrop'),
+    lyricStyle: normalizeLyricStyle(value.lyricStyle),
   };
 }
 

@@ -1,5 +1,6 @@
 import { parseLrc, parseSrt, toLrc as writeLrc, toSrt as writeSrt } from '@thepropervolume/karaoke-core';
 import type { LyricLine, TimedWord } from './project';
+import { layoutLyrics, lyricFonts, type LyricStyle } from './lyric-style';
 
 export { parseLrc, parseSrt, parseStamp } from '@thepropervolume/karaoke-core';
 export type LyricsFormat = 'json' | 'lrc' | 'srt';
@@ -48,34 +49,30 @@ export function toLyricsJson(title: string, artist: string, durationSeconds: num
   return JSON.stringify({ schema: 'com.thepropervolume.karaoke-studio', version: 1, title, artist, durationSeconds, lyrics: lines }, null, 2) + '\n';
 }
 
-export function toAss(title: string, artist: string, duration: number, lines: readonly LyricLine[], target: 'video' | 'cdg' = 'video'): string {
+export function toAss(title: string, artist: string, duration: number, lines: readonly LyricLine[], target: 'video' | 'cdg' = 'video', appearance?: LyricStyle): string {
   const esc = (value: string) => value.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}').replace(/\r?\n/g, '\\N');
-  const resolution = target === 'cdg' ? 'PlayResX: 300\nPlayResY: 216\nWrapStyle: 0' : 'PlayResX: 1920\nPlayResY: 1080\nWrapStyle: 2';
-  const style = target === 'cdg'
-    ? 'Style: Default,Arial,20,&H00FFFFFF,&H00AA22DD,&H00000000,&H00000000,-1,0,1,0,0,2,14,14,72,1\n\n'
-    : 'Style: Default,Arial,64,&H00FFFFFF,&H007A16D5,&H80101020,&H80101020,-1,0,1,4,1,2,110,110,120,1\n\n';
+  const { width, height, style, entries } = layoutLyrics(lines, duration, appearance, target);
+  const resolution = 'PlayResX: ' + width + '\nPlayResY: ' + height + '\nScaledBorderAndShadow: yes\nWrapStyle: 2';
+  const assColor = (color: string) => '&H00' + color.slice(5, 7) + color.slice(3, 5) + color.slice(1, 3);
+  // libass uses the secondary color before a karaoke syllable's time.
+  const palette = [style.highlightColor, style.textColor, style.outlineColor, style.backgroundColor].map(assColor).join(',');
+  const styleLine = 'Style: Default,' + lyricFonts[style.font].family + ',64,' + palette + ',-1,0,1,3,0,5,0,0,0,1\n\n';
   const header = '[Script Info]\nTitle: ' + esc(title) + ' - ' + esc(artist) + '\nScriptType: v4.00+\n' + resolution + '\n\n' +
     '[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n' +
-    style +
+    styleLine +
     '[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n';
   const stamp = (seconds: number) => {
     const cs = Math.max(0, Math.round(seconds * 100));
     return Math.floor(cs / 360000) + ':' + String(Math.floor(cs / 6000) % 60).padStart(2, '0') + ':' + String(Math.floor(cs / 100) % 60).padStart(2, '0') + '.' + String(cs % 100).padStart(2, '0');
   };
-  const events = lines.filter(line => line.text.trim()).map(line => {
-    const start = Math.min(duration, Math.max(0, line.startSeconds)), end = Math.min(duration, Math.max(start + 0.1, line.endSeconds));
-    let text = '';
-    if (line.words.length) {
-      let cursor = start;
-      for (const word of line.words) {
-        const wordStart = Math.max(cursor, word.startSeconds), wordEnd = Math.max(wordStart, word.endSeconds);
-        if (wordStart > cursor) text += '{\\k' + Math.max(1, Math.round((wordStart - cursor) * 100)) + '}';
-        text += '{\\kf' + Math.max(1, Math.round((wordEnd - wordStart) * 100)) + '}' + esc(word.text);
-        cursor = wordEnd;
-      }
-      if (cursor < end) text += '{\\k' + Math.max(1, Math.round((end - cursor) * 100)) + '}';
-    } else text = '{\\kf' + Math.max(1, Math.round((end - start) * 100)) + '}' + esc(line.text);
-    return 'Dialogue: 0,' + stamp(start) + ',' + stamp(end) + ',Default,,0,0,0,,' + text;
+  const events = entries.map(({ showAt, hideAt, words, centerY, fontSize }) => {
+    const position = '{\\an5\\pos(' + width / 2 + ',' + centerY + ')\\fs' + fontSize + '\\bord' + Math.max(.5, fontSize * .0425).toFixed(2) + '}';
+    const lyrics = words.map(word => {
+      const delay = Math.max(0, Math.round((word.startSeconds - showAt) * 100));
+      const span = Math.max(1, Math.round((word.endSeconds - word.startSeconds) * 100));
+      return '{\\kt' + delay + '\\kf' + span + '}' + esc(word.text);
+    }).join('');
+    return 'Dialogue: 0,' + stamp(showAt) + ',' + stamp(hideAt) + ',Default,,0,0,0,,' + position + lyrics;
   });
   return header + events.join('\n') + '\n';
 }

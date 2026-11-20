@@ -2,6 +2,12 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('studio', {
   getSettings: () => ipcRenderer.invoke('studio:get-settings'),
   saveSettings: value => ipcRenderer.invoke('studio:save-settings', value),
+  onMenuAction: listener => {
+    const onAction = (_event, action) => listener(action);
+    ipcRenderer.on('studio:menu-action', onAction);
+    return () => ipcRenderer.removeListener('studio:menu-action', onAction);
+  },
+  updateMenu: state => ipcRenderer.invoke('studio:update-menu', state),
   getSeparatorModels: input => ipcRenderer.invoke('studio:separator-models', input),
   getAlignmentStatus: () => ipcRenderer.invoke('studio:alignment-status'),
   installAlignment: () => ipcRenderer.invoke('studio:install-alignment'),

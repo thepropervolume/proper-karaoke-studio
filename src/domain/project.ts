@@ -1,4 +1,5 @@
 import type { LyricLine, TimedWord } from '@thepropervolume/karaoke-core';
+import { layoutLyrics, type LyricStyle } from './lyric-style';
 
 export type { LyricLine, TimedWord } from '@thepropervolume/karaoke-core';
 
@@ -10,7 +11,7 @@ export type StudioStem = {
 export type StudioProject = {
   schema: 'com.thepropervolume.karaoke-studio'; version: 1; title: string; artist: string;
   durationSeconds: number; stems: Omit<StudioStem, 'file' | 'url'>[]; lyrics: LyricLine[]; importedCdg?: string | null;
-  backgroundPath?: string | null;
+  backgroundPath?: string | null; lyricStyle?: LyricStyle;
 };
 
 export function newLyricLines(text: string, duration: number): LyricLine[] {
@@ -122,25 +123,19 @@ export function toPortableKitProject(project: StudioProject): StudioProject {
 
 // Adapt editor cues to the Booth canvas renderer so preview and playback share
 // the same drawing path instead of growing a second lyric renderer.
-export function toRenderTiming(lines: readonly LyricLine[], duration: number) {
-  const safeDuration = Math.max(1, Number.isFinite(duration) ? duration : 1);
+export function toRenderTiming(lines: readonly LyricLine[], duration: number, style?: LyricStyle) {
+  const { width, height, side, style: palette, entries } = layoutLyrics(lines, duration, style);
   return {
-    durationSeconds: safeDuration, bounds: { x: 0, y: 0, width: 640, height: 360 },
+    durationSeconds: Math.max(1, duration), bounds: { x: 0, y: 0, width, height },
     rightToLeft: false, tracks: [], files: [], countIns: [],
-    pages: lines.filter(line => line.text.trim()).map((line, index) => {
-      const startSeconds = Math.max(0, line.startSeconds);
-      const endSeconds = Math.min(safeDuration, Math.max(startSeconds + 0.05, line.endSeconds));
-      const words = line.words.length ? line.words : [{ text: line.text, startSeconds, endSeconds }];
-      const syllables = words.map(word => ({
-        text: word.text, startSeconds: Math.max(startSeconds, word.startSeconds),
-        endSeconds: Math.min(endSeconds, Math.max(word.startSeconds, word.endSeconds)),
-      }));
+    pages: entries.map(({ showAt: startSeconds, hideAt: endSeconds, words: syllables, centerY, fontSize }, index) => {
+      const lineHeight = fontSize / .8;
       return {
         id: index, startSeconds, endSeconds, fadeIn: { startSeconds, durationSeconds: 0 },
-        fadeOut: { startSeconds: endSeconds, durationSeconds: 0 }, activeColor: null, inactiveColor: '#FFFFFF',
+        fadeOut: { startSeconds: endSeconds, durationSeconds: 0 }, activeColor: palette.highlightColor, inactiveColor: palette.textColor,
         rightToLeft: false, trackId: null, voice: 'Lead',
         lines: [{
-          id: index, box: { x: 24, y: 236, width: 592, height: 74 }, leadIn: null,
+          id: index, box: { x: side, y: centerY - lineHeight / 2, width: width - side * 2, height: lineHeight }, leadIn: null,
           words: syllables.map((item, wordIndex) => ({ id: wordIndex, syllables: [item] })), syllables,
         }],
       };

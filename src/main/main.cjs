@@ -13,6 +13,7 @@ const { discoverModels } = require('./separator-models.cjs');
 const { createIntegrationCatalog } = require('./integration-catalog.cjs');
 const { createIntegrationSecrets } = require('./integration-secrets.cjs');
 const { checkDangoConnection, normalizeDangoCredentials, separateWithDango } = require('./dango-separator.cjs');
+const { createStudioMenu } = require('./studio-menu.cjs');
 
 // Files are served to the renderer through random one-session URLs, never file:// URLs.
 protocol.registerSchemesAsPrivileged([{
@@ -22,6 +23,7 @@ protocol.registerSchemesAsPrivileged([{
 
 const media = new Map();
 let mainWindow;
+let updateStudioMenu;
 let recovery;
 let quitting = false;
 let microphoneExpiresAt = 0;
@@ -114,6 +116,7 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   const window = mainWindow;
+  updateStudioMenu = createStudioMenu(window);
   microphoneExpiresAt = 0;
   configurePermissions(window.webContents.session);
   let closing = false;
@@ -140,6 +143,7 @@ app.whenReady().then(() => {
   if (process.platform === 'win32') app.setAppUserModelId('com.thepropervolume.karaokestudio');
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(brandIcon());
   const dangoCredentials = registerIntegrations(path.join(app.getPath('userData'), 'integrations'));
+  handleEditor('studio:update-menu', (_event, state) => updateStudioMenu(state ?? {}));
   protocol.handle('studio-media', request => serveStudioMedia(request, media.get(new URL(request.url).hostname)));
   ipcMain.handle('studio:get-settings', () => loadSettings(settingsPath()));
   ipcMain.handle('studio:save-settings', (_event, value) => saveSettings(settingsPath(), value));

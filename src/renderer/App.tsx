@@ -4,6 +4,7 @@ import { paintKaraFunLyrics } from '../shared/from-booth/display/karafun-lyrics'
 import { finishTimedWord, newLyricLines, recordTimedWordStart, seedTimedWords, timedWordCount, toPortableKitProject, toRenderTiming, type LyricLine, type StudioProject, type StudioRole, type StudioStem } from '../domain/project';
 import { parseLyricsFile, toAss, toLrc, toLyricsJson, toSrt } from '../domain/lyrics-formats';
 import { applyForcedAlignment } from '../domain/forced-alignment';
+import { defaultLyricStyle, lyricFonts, normalizeLyricStyle } from '../domain/lyric-style';
 import { CdgPlayer, cdgByteLimit } from '../domain/cdg';
 import { CdgPreview } from './CdgPreview';
 import { WaveformTimeline } from './WaveformTimeline';
@@ -11,6 +12,7 @@ import { StudioIcon, type StudioIconName } from './StudioIcon';
 import { WorkspaceSeparator, defaultInspectorWidth, inspectorMax, minInspectorWidth } from './WorkspaceSeparator';
 import { VoiceRecorder } from './VoiceRecorder';
 import { PreferencesDialog, preferenceError } from './PreferencesDialog';
+import { LyricAppearance } from './LyricAppearance';
 import { version } from '../../package.json';
 import markDark from '../../assets/branding/icon-dark.svg';
 import markLight from '../../assets/branding/icon-light.svg';
@@ -87,6 +89,9 @@ export function App() {
   const [storedInspectorWidth, setInspectorWidth] = useState(readInspectorWidth);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [lyricAppearanceOpen, setLyricAppearanceOpen] = useState(false);
+  const [lyricStyle, setLyricStyle] = useState(defaultLyricStyle);
+  const [fontReady, setFontReady] = useState(0);
   const [draftOpen, setDraftOpen] = useState(true);
   const inspectorMaximum = inspectorMax(viewportWidth);
   const inspectorWidth = Math.min(inspectorMaximum, storedInspectorWidth);
@@ -158,7 +163,7 @@ export function App() {
 
   useEffect(() => { stemRef.current = stems; }, [stems]);
   useEffect(() => { linesRef.current = lines; }, [lines]);
-  const renderTiming = useMemo(() => toRenderTiming(lines, duration), [lines, duration]);
+  const renderTiming = useMemo(() => toRenderTiming(lines, duration, lyricStyle), [lines, duration, lyricStyle]);
   const cdgPlayer = lines.length ? null : decodedCdg;
   const previewDuration = duration || cdgPlayer?.durationSeconds || 0;
   const livePosition = useCallback(() => player.current?.snapshot()?.position, []);
@@ -168,16 +173,23 @@ export function App() {
     return lines.map(line => { const current = offset; offset += line.words.length; return current; });
   }, [lines]);
   useEffect(() => {
+    let current = true;
+    void document.fonts.load(`700 24px "${lyricFonts[lyricStyle.font].family}"`)
+      .then(() => { if (current) setFontReady(value => value + 1); }).catch(() => {});
+    return () => { current = false; };
+  }, [lyricStyle.font]);
+  useEffect(() => {
     const paint = () => {
       if (canvas.current) paintKaraFunLyrics(canvas.current, renderTiming, position, {
-        fontFamily: 'Arial, sans-serif', primarySingerColor: '#d5167a', inactiveColor: '#fff',
+        fontFamily: '"' + lyricFonts[lyricStyle.font].family + '", sans-serif',
+        primarySingerColor: lyricStyle.highlightColor, outlineColor: lyricStyle.outlineColor,
       });
     };
     paint();
     const observer = new ResizeObserver(paint);
     if (canvas.current) observer.observe(canvas.current);
     return () => observer.disconnect();
-  }, [renderTiming, position]);
+  }, [renderTiming, position, lyricStyle, fontReady]);
 
   const loadStems = useCallback(async (next: StudioStem[], projectDuration?: number) => {
     player.current?.stop();
@@ -239,6 +251,7 @@ export function App() {
     setTitle(project.title);
     setArtist(project.artist);
     setLines(project.lyrics);
+    setLyricStyle(normalizeLyricStyle(project.lyricStyle));
     setLyricsDraft(draft ?? project.lyrics.map(line => line.text).join('\n'));
     setDraftPending(draft !== null);
     setWorkspace(project.lyrics.length || project.importedCdg || draft ? 'lyrics' : 'audio');
@@ -503,9 +516,13 @@ export function App() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
   const exportLyrics = async (format: 'json' | 'lrc' | 'srt') => {
-    const content = format === 'json' ? toLyricsJson(title, artist, duration, lines) : format === 'lrc' ? toLrc(title, artist, lines) : toSrt(lines);
-    const file = await window.studio.saveText({ name: safeName(title), extension: format === 'lrc' ? 'lrc' : format, content });
-    if (file) setStatus('Saved ' + file.split(/[\\/]/).at(-1) + '.');
+    setBusy(true); setError('');
+    try {
+      const content = format === 'json' ? toLyricsJson(title, artist, duration, lines) : format === 'lrc' ? toLrc(title, artist, lines) : toSrt(lines);
+      const file = await window.studio.saveText({ name: safeName(title), extension: format, content });
+      if (file) setStatus('Saved ' + basename(file) + '.');
+    } catch (cause) { setError(preferenceError(cause)); }
+    finally { setBusy(false); }
   };
   const separate = async () => {
     const source = stems.find(stem => stem.path)?.path;
@@ -531,11 +548,11 @@ export function App() {
 
   const currentProject = useMemo<StudioProject>(() => ({
     schema: 'com.thepropervolume.karaoke-studio', version: 1, title, artist, durationSeconds: duration,
-    stems: stems.map(({ file: _file, url: _url, ...stem }) => stem), lyrics: lines, importedCdg: cdgPath, backgroundPath: background?.path ?? null,
-  }), [title, artist, duration, stems, lines, cdgPath, background?.path]);
+    stems: stems.map(({ file: _file, url: _url, ...stem }) => stem), lyrics: lines, importedCdg: cdgPath, backgroundPath: background?.path ?? null, lyricStyle,
+  }), [title, artist, duration, stems, lines, cdgPath, background?.path, lyricStyle]);
   const projectChanged = useMemo(() => openedProject ? openedProject.snapshot !== JSON.stringify(currentProject)
-    : Boolean(stems.length || lines.length || background || cdgPath || title || artist),
-  [openedProject, currentProject, stems.length, lines.length, background, cdgPath, title, artist]);
+    : Boolean(stems.length || lines.length || background || cdgPath || title || artist || JSON.stringify(lyricStyle) !== JSON.stringify(defaultLyricStyle)),
+  [openedProject, currentProject, stems.length, lines.length, background, cdgPath, title, artist, lyricStyle]);
   const pendingLyrics = draftPending ? lyricsDraft : null;
 
   useEffect(() => {
@@ -623,10 +640,10 @@ export function App() {
     try {
       const saved = await window.studio.exportVideo({
         name: safeName(title), duration, artist, title, ffmpegPath: settings.ffmpegPath,
-        backgroundPath: background?.path,
+        backgroundPath: background?.path, backgroundColor: lyricStyle.backgroundColor,
         cdgPath: lines.length ? null : cdgPath,
         stems: stems.map(stem => ({ path: stem.path, name: stem.name, role: stem.role, voice: stem.voice, volume: stem.volume })),
-        ass: toAss(title, artist, duration, lines),
+        ass: toAss(title, artist, duration, lines, 'video', lyricStyle),
       });
       if (saved) setStatus('Rendered video: ' + saved.split(/[\\/]/).at(-1) + '.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); setStatus('Video export failed.'); }
@@ -639,20 +656,52 @@ export function App() {
       const name = safeName(title);
       const exportDuration = duration || lines.reduce((end, line) => Math.max(end, line.endSeconds), 0);
       const saved = await window.studio.exportCdg(original && cdgPath ? { name, cdgPath }
-        : { name, duration: exportDuration, ass: toAss(title, artist, exportDuration, lines, 'cdg'), ffmpegPath: settings.ffmpegPath });
+        : { name, duration: exportDuration, ass: toAss(title, artist, exportDuration, lines, 'cdg', lyricStyle),
+          backgroundColor: lyricStyle.backgroundColor, ffmpegPath: settings.ffmpegPath });
       if (saved) setStatus('Exported CD+G graphics: ' + basename(saved) + '.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
   };
 
-  const editorInert = projectTransition || recoveryOpen || voiceRecorderOpen || settingsOpen || appearanceOpen;
+  const editorInert = projectTransition || recoveryOpen || voiceRecorderOpen || settingsOpen || appearanceOpen || lyricAppearanceOpen;
+  const menuEnabled = !editorInert && !busy && !timing;
+  const hasStems = stems.length > 0, hasLyrics = lines.length > 0, hasCdg = Boolean(cdgPath), canStyle = !cdgPlayer;
+  const menuAction = useRef<(action: StudioMenuAction) => void>(() => {});
+  menuAction.current = action => {
+    if (!menuEnabled) return;
+    switch (action) {
+      case 'open': void openProject(); break;
+      case 'save': void saveProject(); break;
+      case 'save-as': void saveProject(true); break;
+      case 'preferences': setSettingsOpen(true); break;
+      case 'appearance': setAppearanceOpen(true); break;
+      case 'lyrics-style': if (canStyle) setLyricAppearanceOpen(true); break;
+      case 'theme-day': setAppearance(current => ({ ...current, theme: 'day' })); break;
+      case 'theme-night': setAppearance(current => ({ ...current, theme: 'night' })); break;
+      case 'accent-blue': setAppearance(current => ({ ...current, accent: 'blue' })); break;
+      case 'accent-pink': setAppearance(current => ({ ...current, accent: 'pink' })); break;
+      case 'accent-purple': setAppearance(current => ({ ...current, accent: 'purple' })); break;
+      case 'export-mp4': if (hasStems) void exportVideo(); break;
+      case 'export-kit': if (hasStems) void exportKit(); break;
+      case 'export-cdg': if (hasLyrics) void exportCdg(); break;
+      case 'export-cdg-original': if (hasCdg) void exportCdg(true); break;
+      case 'export-lrc': if (hasLyrics) void exportLyrics('lrc'); break;
+      case 'export-srt': if (hasLyrics) void exportLyrics('srt'); break;
+      case 'export-json': if (hasLyrics) void exportLyrics('json'); break;
+    }
+  };
+  useEffect(() => window.studio.onMenuAction(action => menuAction.current(action)), []);
+  useEffect(() => {
+    void window.studio.updateMenu({ editing: menuEnabled, stems: hasStems, lyrics: hasLyrics, cdg: hasCdg, styling: canStyle,
+      theme: appearance.theme, accent: appearance.accent }).catch(() => { /* Toolbar actions remain available. */ });
+  }, [menuEnabled, hasStems, hasLyrics, hasCdg, canStyle, appearance.theme, appearance.accent]);
   const shortcutActions = useRef({ open: () => {}, save: (_as: boolean) => {}, play: () => {}, preferences: () => {}, enabled: false });
   shortcutActions.current = {
     open: () => { void openProject(); },
     save: as => { void saveProject(as); },
     play: () => { void togglePlay(); },
     preferences: () => setSettingsOpen(true),
-    enabled: !editorInert && !busy && !timing,
+    enabled: menuEnabled,
   };
   useEffect(() => {
     const handle = (event: KeyboardEvent) => {
@@ -726,14 +775,17 @@ export function App() {
       <section className="panel preview-panel" aria-labelledby="preview-title">
         <div className="page-heading">
           <div><div className="eyebrow">Project</div><h1 id="preview-title">Singer Preview</h1></div>
-          <IconButton icon="image" label="Choose Background" disabled={Boolean(cdgPlayer) || busy} onClick={() => void chooseBackground()} />
+          <div className="toolbar">
+            <IconButton icon="palette" label="Lyric Appearance" disabled={!canStyle || busy} onClick={() => setLyricAppearanceOpen(true)} />
+            <IconButton icon="image" label="Choose Background" disabled={!canStyle || busy} onClick={() => void chooseBackground()} />
+          </div>
         </div>
         <div className="project-fields">
           <label className="field-label">Song Title<input aria-label="Song title" placeholder="Untitled song" value={title} onChange={event => setTitle(event.target.value)} /></label>
           <label className="field-label">Artist<input aria-label="Artist" placeholder="Artist name" value={artist} onChange={event => setArtist(event.target.value)} /></label>
         </div>
         <div className="preview-well">
-          <div className="preview-stage" aria-label="Karaoke lyrics preview">
+          <div className="preview-stage" style={{ backgroundColor: lyricStyle.backgroundColor }} aria-label="Karaoke lyrics preview">
             {cdgPlayer ? <CdgPreview player={cdgPlayer} seconds={position} playing={playing} livePosition={livePosition} /> : <>
               {background?.url && <img src={background.url} alt="Selected karaoke background" />}
               <canvas ref={canvas} />
@@ -945,6 +997,7 @@ export function App() {
         </div>
       </section>
     </div>}
+    {lyricAppearanceOpen && <LyricAppearance value={lyricStyle} change={setLyricStyle} close={() => setLyricAppearanceOpen(false)} />}
     {voiceRecorderOpen && <VoiceRecorder title={title} roles={roles} onSaved={addVoiceRecording} onClose={() => setVoiceRecorderOpen(false)} />}
     {recoveryOpen && <div className="settings" role="presentation">
       <section className="settings-card" role="dialog" aria-modal="true" aria-labelledby="recovery-title" onKeyDown={event => {

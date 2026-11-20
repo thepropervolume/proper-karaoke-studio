@@ -144,15 +144,35 @@ async function writeOutput(destination, overwrite, write) {
   } finally { await fs.rm(temporaryDirectory, { recursive: true, force: true }); }
 }
 
-async function rasterizeCdg(ass, duration, ffmpeg) {
+function exportBackground(value, fallback) {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? '0x' + value.slice(1) : fallback;
+}
+
+async function stageLyricFonts(directory) {
+  const candidates = [
+    process.resourcesPath && path.join(process.resourcesPath, 'lyric-fonts'),
+    path.join(__dirname, 'lyric-fonts'),
+    path.join(__dirname, '..', 'public', 'lyric-fonts'),
+    path.join(__dirname, '..', '..', 'public', 'lyric-fonts'),
+  ].filter(Boolean);
+  for (const source of candidates) {
+    if (!(await fs.stat(source).catch(() => null))?.isDirectory()) continue;
+    await fs.cp(source, path.join(directory, 'fonts'), { recursive: true });
+    return;
+  }
+  throw new Error('Studio’s lyric fonts could not be found. Repair the Studio installation and try again.');
+}
+
+async function rasterizeCdg(ass, duration, ffmpeg, color) {
   const encoder = new CdgEncoder(duration);
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tpv-studio-cdg-'));
   try {
     await fs.writeFile(path.join(directory, 'lyrics.ass'), text(ass, 'subtitle data', 8 * 1024 * 1024), 'utf8');
+    await stageLyricFonts(directory);
     const executable = /[\\/]/.test(ffmpeg) ? path.resolve(ffmpeg) : ffmpeg;
     const child = spawn(executable, [
-      '-v', 'error', '-nostdin', '-f', 'lavfi', '-i', 'color=c=black:s=' + cdgWidth + 'x' + cdgHeight + ':r=' + cdgExportFrameRate + ':d=' + duration,
-      '-vf', 'subtitles=filename=lyrics.ass', '-pix_fmt', 'rgb24', '-threads', '1', '-f', 'rawvideo', 'pipe:1',
+      '-v', 'error', '-nostdin', '-f', 'lavfi', '-i', 'color=c=' + exportBackground(color, 'black') + ':s=' + cdgWidth + 'x' + cdgHeight + ':r=' + cdgExportFrameRate + ':d=' + duration,
+      '-vf', 'subtitles=filename=lyrics.ass:fontsdir=fonts', '-pix_fmt', 'rgb24', '-threads', '1', '-f', 'rawvideo', 'pipe:1',
     ], { cwd: directory, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '', startupError;
     child.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-2400); });
@@ -188,7 +208,7 @@ async function rasterizeCdg(ass, duration, ffmpeg) {
 
 async function exportCdg(input, destination, overwrite = true) {
   const bytes = input.cdgPath ? await readCdg(input.cdgPath)
-    : await rasterizeCdg(input.ass, input.duration, text(input.ffmpegPath, 'FFmpeg executable', 4096).trim() || 'ffmpeg');
+    : await rasterizeCdg(input.ass, input.duration, text(input.ffmpegPath, 'FFmpeg executable', 4096).trim() || 'ffmpeg', input.backgroundColor);
   return writeOutput(destination, overwrite, file => fs.writeFile(file, bytes));
 }
 
@@ -237,8 +257,9 @@ async function exportVideo(input, destination, overwrite = true) {
       args.push('-protocol_whitelist', 'file,pipe', '-f', 'cdg', '-i', graphics);
     } else {
       await fs.writeFile(assPath, text(input.ass, 'subtitle data', 8 * 1024 * 1024), 'utf8');
+      await stageLyricFonts(tempDir);
       if (input.backgroundPath) args.push('-loop', '1', '-framerate', '30', '-i', await localFile(input.backgroundPath, IMAGE_EXTENSIONS));
-      else args.push('-f', 'lavfi', '-i', 'color=c=0x171226:s=1920x1080:r=30:d=' + duration);
+      else args.push('-f', 'lavfi', '-i', 'color=c=' + exportBackground(input.backgroundColor, '0x171226') + ':s=1920x1080:r=30:d=' + duration);
     }
     const stems = [];
     for (const stem of input.stems) {
@@ -248,7 +269,8 @@ async function exportVideo(input, destination, overwrite = true) {
     }
     const filters = [input.cdgPath
       ? '[0:v]fps=30:start_time=0,format=yuv420p,scale=1500:1080:flags=neighbor,pad=1920:1080:210:0,setsar=1,tpad=stop_mode=clone:stop_duration=' + duration + '[v]'
-      : '[0:v]subtitles=filename=lyrics.ass[v]'];
+      : '[0:v]' + (input.backgroundPath ? 'scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1,' : '')
+        + 'subtitles=filename=lyrics.ass:fontsdir=fonts[v]'];
     stems.forEach((stem, index) => filters.push('[' + (index + 1) + ':a]volume=' + stem.volume + '[a' + index + ']'));
     filters.push(stems.map((_stem, index) => '[a' + index + ']').join('') + 'amix=inputs=' + stems.length + ':normalize=0:duration=longest,alimiter=limit=0.95[mix]');
     args.push('-filter_complex', filters.join(';'), '-map', '[v]', '-map', '[mix]', '-t', String(duration),
