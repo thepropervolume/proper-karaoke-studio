@@ -4,7 +4,7 @@
 
 The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaoke tracks from audio stems and timed lyrics. It previews the result with the same lyric renderer used in The Proper Volume Karaoke Booth, then exports a video or a portable TPV kit.
 
-## Prototype 0.6.0
+## Prototype 0.6.1
 
 ### Implemented
 
@@ -13,7 +13,7 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 - Paste lyrics and capture line or word starts during playback with the timing button or Spacebar; cue and word start/end times are directly editable.
 - Scrub through a zoomable waveform and move a selected lyric cue to the playhead while retaining its word timing offsets.
 - Force-align supplied lyrics to a selected local audio track with WhisperX. The alignment path does not run speech recognition, generate lyrics, or change supplied text; exact lyric words and line breaks are retained while timings are added.
-- Import and export the Studio lyrics JSON schema, Enhanced LRC word timestamps, and SRT line cues.
+- Import and export the Studio lyrics JSON schema, Enhanced LRC word timestamps, and SRT line cues. Studio uses Karaoke Core for LRC, SRT, and the common timing types.
 - Map external timed lyric JSON through explicit JSON Pointer paths and time units in the [CLI](json-lyric-import.md).
 - Render an MP4 with mixed audio, karaoke highlighting, and an optional still-image background through a configured local FFmpeg executable.
 - Import and preview original CD+G graphics with local audio, render them to MP4, and author new CD+G graphics from timed cues. [CD+G workflow](cdg.md)
@@ -32,7 +32,7 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 - A graphical JSON mapping editor, punch-in and overdub recording, and optional remote inference.
 - Validate alignment on complete songs and physical microphone recording on supported platforms.
 - Signed Windows packages, notarized macOS installers, and installation and upgrade checks on physical devices.
-- Move stable audio and lyrics interfaces into the shared core repository.
+- Adopt the common timing types in Booth and move the remaining provider-neutral playback and rendering interfaces into Karaoke Core.
 
 ## Audio separation design
 
@@ -53,7 +53,7 @@ A TPV kit is a ZIP archive containing manifest.json, lyrics/lyrics.json, lyrics/
 
 ## Shared-code boundary
 
-Studio currently pins a copy of the Booth's Web Audio player and canvas lyric renderer. Shared, provider-neutral audio, timing, and rendering code should move into a versioned proper-karaoke-core package when its API stabilizes. Each app should keep its own Electron shell, service integration, file workflow, user interface, and packaging.
+Studio uses Karaoke Core 0.1.0 for provider-neutral timing and LRC/SRT interchange. Studio currently pins a copy of Booth's Web Audio player and canvas lyric renderer. The shared package can absorb provider-neutral audio and rendering interfaces once both apps can consume them. Application shells, providers, project files, and packaging belong in the respective apps.
 
 ## AI lyric synchronization
 
