@@ -3,6 +3,8 @@
   "version": "0.4.0",
   "private": true,
   "type": "module",
+  "author": { "name": "The Proper Volume", "email": "hello@thepropervolume.com" },
+  "homepage": "https://release.thepropervolume.com/studio",
   "description": "The Proper Volume Karaoke Studio — create karaoke videos and TPV kits from audio stems and timed lyrics.",
   "main": "dist-electron/main.cjs",
   "bin": { "tpv-studio": "dist-electron/cli.cjs" },
