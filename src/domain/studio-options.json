@@ -1,0 +1,23 @@
+{
+  "alignmentLanguages": ["ar", "ca", "cs", "da", "de", "el", "en", "es", "eu", "fa", "fi", "fr", "gl", "he", "hi", "hr", "hu", "it", "ka", "ko", "lv", "ml", "nl", "nn", "no", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "te", "tl", "tr", "uk", "ur", "vi"],
+  "separatorModels": {
+    "audio-separator": [
+      { "id": "UVR-MDX-NET-Inst_HQ_3.onnx", "label": "UVR MDX Instrumental HQ 3", "group": "Recommended" },
+      { "id": "UVR_MDXNET_KARA_2.onnx", "label": "UVR MDX Karaoke 2", "group": "Recommended" },
+      { "id": "Kim_Vocal_2.onnx", "label": "Kim Vocal 2", "group": "Recommended" }
+    ],
+    "demucs": [
+      { "id": "htdemucs", "label": "Hybrid Transformer Demucs", "group": "Recommended" },
+      { "id": "htdemucs_ft", "label": "Hybrid Transformer Demucs · Fine Tuned", "group": "Recommended" },
+      { "id": "htdemucs_6s", "label": "Hybrid Transformer Demucs · 6 Stems", "group": "Recommended" },
+      { "id": "hdemucs_mmi", "label": "Hybrid Demucs · MMI", "group": "Other" },
+      { "id": "mdx", "label": "MDX", "group": "Other" },
+      { "id": "mdx_extra", "label": "MDX Extra", "group": "Other" }
+    ],
+    "dango": [
+      { "id": "29", "label": "Dango 11.0 · Vocals and Accompaniment", "group": "Dango Cloud" },
+      { "id": "30", "label": "Dango 11.0 · Enhanced Vocals", "group": "Dango Cloud" },
+      { "id": "31", "label": "Dango 11.0 · Preserve Backing Vocals", "group": "Dango Cloud" }
+    ]
+  }
+}
