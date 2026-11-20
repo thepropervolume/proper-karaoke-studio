@@ -4,7 +4,7 @@ Studio aligns the lyrics you provide to your audio. The displayed words and line
 
 ## Setup
 
-Choose **Set Up Lyric Sync** in Studio or start your first **AI Sync**. Studio downloads a compatible Python 3.13 environment and WhisperX with its audio tools. The installation resides in your Studio app data and leaves the system Python and PATH alone.
+Choose **Install AI Sync** under **Preferences → Audio & Lyrics** or start your first **AI Sync**. Studio downloads a compatible Python 3.13 environment and WhisperX with its audio tools. The installation resides in your Studio app data and leaves the system Python and PATH alone.
 
 The first setup needs an internet connection and several minutes for the package downloads. Your first sync in a language also downloads its acoustic model. Studio runs alignment on your computer. The managed environment uses CPU inference on Windows x64, Linux x64, and Apple silicon Mac.
 
