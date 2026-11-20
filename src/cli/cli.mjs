@@ -24,7 +24,7 @@ const commands = {
   'stems edit': ' <stem> [--path <audio>] [--role <role>] [--voice <name>] [--name <name>] [--volume <gain>] [--duration <seconds>] [--ffmpeg <exe>]',
   'stems remove': ' <stem...>',
   'stems separate': ' <audio> --output-dir <directory> [--add] [--executable <exe>] [--model <model>] [--ffmpeg <exe>]',
-  'lyrics import': ' <file>',
+  'lyrics import': ' <file> [--mapping <mapping.json>]',
   'lyrics show': ' [<line>]',
   'lyrics set': ' <text-file> | --text <lyrics>',
   'lyrics line': ' <line> [--text <text>] [--start <seconds>] [--end <seconds>]',

@@ -30,6 +30,8 @@ Stem and line selectors accept IDs or one-based indexes. Word selectors use one-
 
 Import a CD+G source with `lyrics import <file.cdg>`. Add its matching audio with `stems add` and use `export video` to render the graphics with audio. With editable lyric cues, `export lyrics cdg` draws a new graphics track. Add `--original` to copy the attached source byte for byte. The [CD+G guide](cdg.md) describes supported exports and playback.
 
+To import a timed lyric JSON file from another application, supply a [field mapping](json-lyric-import.md) with `lyrics import <file.json> --mapping <mapping.json>`. Studio lyrics JSON exports can be imported directly.
+
 ## Download lyrics with ktools
 
 By default Studio checks `~/Dropbox/Audio/Karaoke/Tools/ktools` and, on macOS, `~/Library/CloudStorage/Dropbox/Audio/Karaoke/Tools/ktools`. Set `TPV_KTOOLS_HOME` or pass `--ktools-home <directory>` for another location. Set `TPV_KTOOLS_PYTHON` or `--python <executable>` if the tool uses a separate Python environment. Source credentials used by ktools are configured through ktools.

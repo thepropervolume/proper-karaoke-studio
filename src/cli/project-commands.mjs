@@ -3,6 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { basename, extname, resolve } from 'node:path';
 import { newLyricLines, seedTimedWords } from '../domain/project.ts';
 import { parseLyricsFile, parseStamp } from '../domain/lyrics-formats.ts';
+import { mapJsonLyrics } from '../domain/json-lyric-mapping.ts';
 import { loadProject, projectRevision, projectSchema, saveProject, stemRoles } from '../domain/project-file.mjs';
 import operations from '../main/studio-operations.cjs';
 
@@ -117,16 +118,30 @@ function updateMetadata(project, options) {
   };
 }
 
-async function importLyrics(project, source) {
+function parseJson(content, label) {
+  try {
+    return JSON.parse(content.replace(/^\uFEFF/, ''));
+  } catch {
+    throw new Error(label + ' must contain valid JSON.');
+  }
+}
+
+async function importLyrics(project, source, mapping) {
   const input = await localFile(source, null, 'lyric');
   const extension = extname(input).toLowerCase();
+  if (mapping !== undefined && extension !== '.json') throw new Error('--mapping requires a JSON lyrics file.');
   if (extension === '.cdg') {
     await operations.readCdg(input);
     return { ...project, importedCdg: input };
   }
   const contents = await readFile(input, 'utf8');
   if (extension === '.txt') return withUntimedLyrics(project, contents);
-  const imported = parseLyricsFile(input, contents.replace(/^\uFEFF/, ''));
+  const imported = mapping === undefined
+    ? parseLyricsFile(input, contents.replace(/^\uFEFF/, ''))
+    : mapJsonLyrics(
+        parseJson(contents, 'Source lyrics'),
+        parseJson(await readFile(await localFile(mapping, null, 'mapping'), 'utf8'), 'Lyrics mapping'),
+      );
   if (!imported.lines.length) throw new Error('The file contains no timed lyrics. Import a .txt file for plain text.');
   return {
     ...project,
@@ -214,8 +229,8 @@ function withDurationAfterStemEdit(prior, current) {
 async function runLyrics(action, project, positional, options) {
   switch (action) {
     case 'import':
-      count(positional, 1, 1, 'lyrics import <file>');
-      return importLyrics(project, positional[0]);
+      count(positional, 1, 1, 'lyrics import <file> [--mapping <mapping.json>]');
+      return importLyrics(project, positional[0], option(options, 'mapping'));
     case 'set': {
       count(positional, 0, 1, 'lyrics set <text-file> | lyrics set --text <lyrics>');
       const text = option(options, 'text');
