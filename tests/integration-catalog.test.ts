@@ -25,7 +25,9 @@ test('catalog serializes edits and exposes only names, websites and credential s
   t.after(() => rm(directory, { recursive: true, force: true }));
   const secrets = keyStore();
   const store = catalog.createIntegrationCatalog({ directory, secrets });
-  const [builtIn] = await store.list();
+  const builtIns = await store.list();
+  const [builtIn] = builtIns;
+  assert.deepEqual(builtIns.map(item => item.id), ['dango-ai', 'mvsep', 'gaudio']);
   assert.deepEqual(builtIn, {
     id: 'dango-ai',
     name: 'Dango AI',
@@ -38,26 +40,27 @@ test('catalog serializes edits and exposes only names, websites and credential s
     store.add({ name: ' Mix Lab ', website: 'https://mix.example/docs?v=2' }),
     store.add({ name: 'Karaoke Tools' }),
   ]);
-  assert.deepEqual(final.map(item => item.name), ['Dango AI', 'Mix Lab', 'Karaoke Tools']);
-  const custom = final[1];
+  assert.deepEqual(final.map(item => item.name), [...builtIns.map(item => item.name), 'Mix Lab', 'Karaoke Tools']);
+  const custom = final.find(item => item.name === 'Mix Lab');
+  assert(custom);
   assert.equal(custom.kind, 'custom');
   assert.equal(custom.website, 'https://mix.example/docs?v=2');
-  assert.equal(final[2].website, null);
+  assert.equal(final.find(item => item.name === 'Karaoke Tools').website, null);
   const privateKey = 'sample-key-never-written-to-registry';
   const configured = await store.setKey(custom.id, privateKey);
-  assert.equal(configured[1].configured, true);
+  assert.equal(configured.find(item => item.id === custom.id).configured, true);
   assert.ok(!JSON.stringify(configured).includes(privateKey));
   assert.ok(!(await readFile(join(directory, 'integrations.json'), 'utf8')).includes(privateKey));
   const reopened = catalog.createIntegrationCatalog({ directory, secrets });
   assert.deepEqual(await reopened.list(), configured);
   assert.equal(await reopened.readKey(custom.id), privateKey);
   secrets.storageAvailable = false;
-  assert.equal((await reopened.list())[1].storageAvailable, false);
+  assert.equal((await reopened.list()).find(item => item.id === custom.id).storageAvailable, false);
   await reopened.setKey('dango-ai', 'test-key');
   const removed = await reopened.remove(custom.id);
   assert.equal(await secrets.readKey(custom.id), null);
-  assert.deepEqual(removed.map(item => item.name), ['Dango AI', 'Karaoke Tools']);
-  assert.equal((await reopened.removeKey('dango-ai'))[0].configured, false);
+  assert.deepEqual(removed.map(item => item.name), [...builtIns.map(item => item.name), 'Karaoke Tools']);
+  assert.equal((await reopened.removeKey('dango-ai')).find(item => item.id === 'dango-ai').configured, false);
 });
 
 test('catalog rejects credentials in URLs and leaves pending or invalid data available for recovery', async t => {
@@ -66,6 +69,7 @@ test('catalog rejects credentials in URLs and leaves pending or invalid data ava
   const secrets = keyStore();
   const store = catalog.createIntegrationCatalog({ directory, secrets });
   await assert.rejects(() => store.add({ name: 'dango ai' }), /already uses this name/);
+  await assert.rejects(() => store.add({ name: 'gaudio' }), /already uses this name/);
   for (const website of ['file:///path', 'http://provider.example', 'javascript:alert(1)', 'data:text/plain,x']) {
     await assert.rejects(() => store.add({ name: 'Provider', website }), /valid HTTPS website/);
   }
@@ -74,13 +78,16 @@ test('catalog rejects credentials in URLs and leaves pending or invalid data ava
   }
   await assert.rejects(() => store.setKey('custom-missing', 'secret'), /Unknown integration/);
   await assert.rejects(() => store.readKey('custom-missing'), /Unknown integration/);
-  await assert.rejects(() => store.remove('dango-ai'), /Remove Key/);
+  for (const id of ['dango-ai', 'mvsep', 'gaudio']) {
+    await assert.rejects(() => store.remove(id), /Remove Key/);
+  }
 
-  const [, item] = await store.add({ name: 'Provider', website: 'https://provider.example/' });
+  const item = (await store.add({ name: 'Provider', website: 'https://provider.example/' })).find(entry => entry.kind === 'custom');
+  assert(item);
   await store.setKey(item.id, 'saved-key');
   secrets.failRemove = true;
   await assert.rejects(() => store.remove(item.id), /Could not remove stored key/);
-  assert.equal((await store.list())[1].configured, true);
+  assert.equal((await store.list()).find(entry => entry.id === item.id).configured, true);
   assert.equal(await store.readKey(item.id), 'saved-key');
 
   const registry = join(directory, 'integrations.json');

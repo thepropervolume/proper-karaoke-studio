@@ -19,6 +19,8 @@ const optionsByAdapter = {
   dango: {
     format: ['mp3', 'flac'], modelType: ['default', 'conserve', 'aggressive'], separateBackingVocals: true,
   },
+  mvsep: {},
+  gaudio: {},
 };
 
 function parseModelOptions(source) {

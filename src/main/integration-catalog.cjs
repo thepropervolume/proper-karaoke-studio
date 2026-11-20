@@ -2,12 +2,16 @@ const { randomUUID } = require('node:crypto');
 const { lstat, mkdir, open, readFile, rename, rm } = require('node:fs/promises');
 const { isAbsolute, join } = require('node:path');
 
-const dango = Object.freeze({
+const builtIns = [
+{
   id: 'dango-ai',
   name: 'Dango AI',
   website: 'https://tuanziai.com/en-US/record?type=tool&tool=vocal-remover',
   kind: 'dango',
-});
+},
+  { id: 'mvsep', name: 'MVSEP', website: 'https://mvsep.com/user-api', kind: 'mvsep' },
+  { id: 'gaudio', name: 'GAUDIO', website: 'https://developers.gaudiolab.io/', kind: 'gaudio' },
+];
 const maxCustom = 24;
 const maxRegistryBytes = 64 * 1024;
 const customId = /^custom-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u;
@@ -117,14 +121,15 @@ function createIntegrationCatalog({ directory, secrets }) {
   }
 
   function known(entries, id) {
-    if (id === dango.id) return dango;
+    const builtIn = builtIns.find(integration => integration.id === id);
+    if (builtIn) return builtIn;
     const match = entries.find(entry => entry.id === id);
     if (!match) throw new Error('Unknown integration.');
     return match;
   }
 
   function publicList(entries) {
-    return Promise.all([dango, ...entries].map(async item => {
+    return Promise.all([...builtIns, ...entries].map(async item => {
       const { configured, storageAvailable } = await secrets.getStatus(item.id);
       return { ...item, configured, storageAvailable };
     }));
@@ -137,7 +142,7 @@ function createIntegrationCatalog({ directory, secrets }) {
       const name = providerName(input?.name);
       const website = providerWebsite(input?.website);
       if (entries.length >= maxCustom) throw new Error('Studio supports up to ' + maxCustom + ' custom integrations.');
-      if ([dango, ...entries].some(item => item.name.toLowerCase() === name.toLowerCase())) {
+      if ([...builtIns, ...entries].some(item => item.name.toLowerCase() === name.toLowerCase())) {
         throw new Error('An integration already uses this name.');
       }
       const updated = [...entries, { id: 'custom-' + randomUUID(), name, website, kind: 'custom' }];

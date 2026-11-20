@@ -18,6 +18,15 @@
       { "id": "29", "label": "Dango 11.0 · Vocals and Accompaniment", "group": "Dango Cloud" },
       { "id": "30", "label": "Dango 11.0 · Enhanced Vocals", "group": "Dango Cloud" },
       { "id": "31", "label": "Dango 11.0 · Preserve Backing Vocals", "group": "Dango Cloud" }
+    ],
+    "mvsep": [
+      { "id": "40", "label": "BS Roformer · Vocals and Instrumental", "group": "MVSEP Cloud" },
+      { "id": "20", "label": "Demucs4 HT · Four Stems", "group": "MVSEP Cloud" },
+      { "id": "49", "label": "MVSEP Karaoke · Lead and Backing Vocals", "group": "MVSEP Cloud" }
+    ],
+    "gaudio": [
+      { "id": "gsep_music_shq_v1", "label": "GSEP Music SHQ · Vocals and Accompaniment", "group": "GAUDIO Cloud" },
+      { "id": "gsep_music_hq_v1", "label": "GSEP Music HQ · Vocals", "group": "GAUDIO Cloud" }
     ]
   }
 }
