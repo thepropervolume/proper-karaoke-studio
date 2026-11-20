@@ -4,13 +4,31 @@ import { parseLyricsFile, parseLrc, parseSrt, toAss, toLrc, toLyricsJson, toSrt 
 import { finishTimedWord, newLyricLines, recordTimedWordStart, seedTimedWords, timedWordCount, toPortableKitProject, toRenderTiming } from '../src/domain/project';
 
 test('round trips Enhanced LRC word timing and metadata', () => {
-  const parsed = parseLrc('[ti:Popular]\n[ar:Nada Surf]\n[00:12.30]<00:12.30>Pop <00:12.70>ular');
+  const parsed = parseLrc('[ti:Popular]\n[ar:Nada Surf]\n[00:12.30]<00:12.30>Pop <00:12.70>ular<00:13.25>');
   assert.equal(parsed.title, 'Popular');
   assert.equal(parsed.artist, 'Nada Surf');
   assert.equal(parsed.lines[0].text, 'Pop ular');
   assert.equal(parsed.lines[0].words[1].startSeconds, 12.7);
-  assert.match(toLrc(parsed.title, parsed.artist, parsed.lines), /<00:12\.30>Pop /);
-  assert.match(toLrc(parsed.title, parsed.artist, parsed.lines), /<00:12\.70>ular/);
+  const exported = toLrc(parsed.title, parsed.artist, parsed.lines);
+  assert.match(exported, /<00:12\.30>Pop /);
+  assert.match(exported, /<00:12\.70>ular<00:13\.25>/);
+  const [imported] = parseLyricsFile('lyrics.elrc', exported).lines;
+  assert.equal(imported.endSeconds, 13.25);
+  assert.deepEqual(imported.words, parsed.lines[0].words);
+});
+
+test('exports edited word timings so they can be imported again', () => {
+  const line = {
+    id: 'edited', text: 'One two', startSeconds: 3, endSeconds: 4,
+    words: [
+      { text: 'One ', startSeconds: 2.75, endSeconds: 3 },
+      { text: 'two', startSeconds: 2.5, endSeconds: 4 },
+    ],
+  };
+  const [imported] = parseLrc(toLrc('Song', 'Artist', [line])).lines;
+  assert.equal(imported.startSeconds, 2.75);
+  assert.deepEqual(imported.words.map(word => word.startSeconds), [2.75, 2.75]);
+  assert.equal(line.words[1].startSeconds, 2.5);
 });
 
 test('imports SRT timestamps and exports numbered cues', () => {

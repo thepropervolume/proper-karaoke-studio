@@ -1,6 +1,8 @@
+import type { LyricLine, TimedWord } from '@thepropervolume/karaoke-core';
+
+export type { LyricLine, TimedWord } from '@thepropervolume/karaoke-core';
+
 export type StudioRole = 'instrumental' | 'lead' | 'backing' | 'other';
-export type TimedWord = { text: string; startSeconds: number; endSeconds: number };
-export type LyricLine = { id: string; text: string; startSeconds: number; endSeconds: number; words: TimedWord[] };
 export type StudioStem = {
   id: string; name: string; role: StudioRole; voice: string; path: string; url: string;
   file?: File; durationSeconds: number; volume: number;

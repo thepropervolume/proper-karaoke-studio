@@ -1,13 +1,17 @@
 # Shared karaoke code
 
-## Recommendation
+## Current integration
 
-Create a separate private repository named thepropervolume/proper-karaoke-core before the second app grows beyond its prototype. Publish tagged, versioned releases and have the Booth and Studio pin the same core package version. Avoid a live filesystem link between the two repositories and avoid a Git submodule for runtime code.
+Studio uses the lyric cue and word timing types plus LRC and SRT format adapters from [Proper Karaoke Core 0.1.0](https://github.com/thepropervolume/proper-karaoke-core/releases/tag/v0.1.0). The versioned npm tarball and its SHA-256 checksum are pinned in the Studio vendor directory. A clean npm install uses the package from this checkout without registry credentials.
+
+Enhanced LRC imports preserve closing timestamps, and outputs include the closing marker for the last word. Studio still owns its project JSON, ASS formatting for MP4 and CD+G, waveform edits, and TPV kits.
+
+To update Core, download the tarball and SHA256SUMS.txt from its private release. Verify the checksum, replace the previous version in vendor, and install the new tarball with npm install --save-exact. Commit the tarball, checksum, manifest, and lockfile together. Run npm ci, npm run build, and npm test from the Studio checkout.
 
 ## Move into core
 
 - Provider-neutral stem roles, mixer, playback clock, and timeline contracts.
-- Lyric cue and word timing types, format adapters, and validation.
+- Remaining timing validation shared by the two apps.
 - Canvas lyric renderer and reusable preview primitives.
 - Audio decoding/output utilities that are not tied to one app's permissions or IPC.
 
@@ -18,6 +22,6 @@ Create a separate private repository named thepropervolume/proper-karaoke-core b
 - Studio authoring/editing, model selection, FFmpeg export, TPV kit workflow.
 - Booth singer rotation, show management, remote queue, and display-window lifecycle.
 
-## Current transition
+## Next migration
 
-Studio copied the renderer modules from Booth commit d783e04b52da3b71ded080be206663b310e12b30 into src/shared/from-booth/. The exact source revision is recorded alongside them. Changes needed for Studio's larger local audio are kept as a small documented delta. Once the core repository exists, move the cleaned provider-neutral API there and update both apps through normal versioned dependency updates.
+Studio still uses playback and renderer modules copied from Booth commit d783e04b52da3b71ded080be206663b310e12b30. Changes needed for Studio's larger local audio and waveform are kept with Studio. Before extracting the common renderer, migrate Booth's compatible lyric format entry points to the same Core package and run its playback and import tests.

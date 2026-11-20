@@ -1,69 +1,12 @@
+import { parseLrc, parseSrt, toLrc as writeLrc, toSrt as writeSrt } from '@thepropervolume/karaoke-core';
 import type { LyricLine, TimedWord } from './project';
+
+export { parseLrc, parseSrt, parseStamp } from '@thepropervolume/karaoke-core';
 export type LyricsFormat = 'json' | 'lrc' | 'srt';
 
-const stampPattern = /^(\d{1,3}):(\d{2})(?:\.(\d{1,3}))?$/;
-export function parseStamp(value: string): number {
-  const match = stampPattern.exec(value.trim());
-  if (!match) throw new Error('Invalid timestamp.');
-  const withinMinute = Number(match[2]);
-  if (withinMinute > 59) throw new Error('Timestamp seconds must be under one minute.');
-  const seconds = Number(match[1]) * 60 + withinMinute + (match[3] ? Number('0.' + match[3]) : 0);
-  if (!Number.isFinite(seconds) || seconds > 24 * 60 * 60) throw new Error('Timestamp is outside the supported range.');
-  return seconds;
-}
 const asLine = (text: string, startSeconds: number, endSeconds: number, words: TimedWord[] = []): LyricLine => ({
   id: crypto.randomUUID(), text, startSeconds, endSeconds, words,
 });
-
-export function parseLrc(input: string): { title: string; artist: string; lines: LyricLine[] } {
-  const raw: { start: number; text: string; words: TimedWord[] }[] = [];
-  let title = '', artist = '';
-  for (const source of input.replace(/^\uFEFF/, '').split(/\r?\n/)) {
-    const meta = /^\[(ti|ar):([^\]]*)\]$/i.exec(source.trim());
-    if (meta) { if (meta[1].toLowerCase() === 'ti') title = meta[2].trim(); else artist = meta[2].trim(); continue; }
-    const lineTag = /^\[(\d{1,3}:\d{2}(?:\.\d{1,3})?)\](.*)$/.exec(source.trim());
-    if (!lineTag) continue;
-    const start = parseStamp(lineTag[1]), body = lineTag[2], timedWords: TimedWord[] = [];
-    const wordTag = /<((?:\d{1,3}:)?\d{2}:\d{2}(?:\.\d{1,3})?)>([^<]*)/g;
-    let word: RegExpExecArray | null;
-    while ((word = wordTag.exec(body))) {
-      const parts = word[1].split(':');
-      const stamp = parts.length === 3 ? Number(parts[0]) * 3600 + parseStamp(parts[1] + ':' + parts[2]) : parseStamp(word[1]);
-      if (word[2]) timedWords.push({ text: word[2], startSeconds: stamp, endSeconds: stamp });
-    }
-    const text = timedWords.length ? timedWords.map(item => item.text).join('') : body.trim();
-    if (text) raw.push({ start, text, words: timedWords });
-  }
-  return {
-    title, artist,
-    lines: raw.map((item, index) => {
-      const endSeconds = raw[index + 1]?.start ?? item.start + 2;
-      const words = item.words.map((entry, wordIndex) => ({ ...entry, endSeconds: item.words[wordIndex + 1]?.startSeconds ?? endSeconds }));
-      return asLine(item.text, item.start, endSeconds, words);
-    }),
-  };
-}
-
-export function parseSrt(input: string): LyricLine[] {
-  const blocks = input.replace(/^\uFEFF/, '').replace(/\r/g, '').trim().split(/\n\s*\n/);
-  const lines: LyricLine[] = [];
-  for (const block of blocks) {
-    const rows = block.split('\n'), timeIndex = rows.findIndex(row => row.includes('-->'));
-    if (timeIndex < 0) continue;
-    const match = /^(\d{2}:\d{2}:\d{2}[,.]\d{3})\s+-->\s+(\d{2}:\d{2}:\d{2}[,.]\d{3})/.exec(rows[timeIndex].trim());
-    if (!match) throw new Error('An SRT cue has an invalid time range.');
-    const toSeconds = (value: string) => {
-      const [hh, mm, ss] = value.replace(',', '.').split(':');
-      if (Number(mm) > 59 || Number(ss) >= 60) throw new Error('An SRT timestamp is outside the valid range.');
-      return Number(hh) * 3600 + Number(mm) * 60 + Number(ss);
-    };
-    const text = rows.slice(timeIndex + 1).join('\n').replace(/<[^>]*>/g, '').trim();
-    const startSeconds = toSeconds(match[1]), endSeconds = toSeconds(match[2]);
-    if (endSeconds < startSeconds) throw new Error('An SRT cue ends before it begins.');
-    if (text) lines.push(asLine(text, startSeconds, endSeconds));
-  }
-  return lines;
-}
 
 export function parseLyricsFile(name: string, content: string): { title?: string; artist?: string; lines: LyricLine[] } {
   const extension = name.toLowerCase().split('.').at(-1);
@@ -83,24 +26,23 @@ export function parseLyricsFile(name: string, content: string): { title?: string
   throw new Error('Choose a TPV lyrics JSON, Enhanced LRC, or SRT file.');
 }
 
-function lrcTime(seconds: number): string {
-  const centiseconds = Math.max(0, Math.round(seconds * 100)), minutes = Math.floor(centiseconds / 6000);
-  const rest = (centiseconds % 6000) / 100;
-  return String(minutes).padStart(2, '0') + ':' + rest.toFixed(2).padStart(5, '0');
-}
-function srtTime(seconds: number): string {
-  const ms = Math.max(0, Math.round(seconds * 1000));
-  const h = Math.floor(ms / 3600000), m = Math.floor(ms / 60000) % 60, s = Math.floor(ms / 1000) % 60, f = ms % 1000;
-  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0') + ',' + String(f).padStart(3, '0');
-}
 export function toLrc(title: string, artist: string, lines: readonly LyricLine[]): string {
-  return ['[ti:' + title + ']', '[ar:' + artist + ']', ...lines.map(line => {
-    const words = line.words.length ? line.words.map(word => '<' + lrcTime(word.startSeconds) + '>' + word.text).join('') : line.text;
-    return '[' + lrcTime(line.startSeconds) + ']' + words;
-  })].join('\n') + '\n';
+  // Studio edits line bounds and words independently. Export a valid sequence without rewriting the project.
+  return writeLrc(title, artist, lines.map(line => {
+    const startSeconds = Math.max(0, Math.min(line.startSeconds, line.words[0]?.startSeconds ?? line.startSeconds));
+    let cursor = startSeconds;
+    const words = line.words.map(word => {
+      cursor = Math.max(cursor, word.startSeconds);
+      return { ...word, startSeconds: cursor };
+    });
+    return { ...line, words, startSeconds, endSeconds: Math.max(cursor, line.endSeconds) };
+  }));
 }
 export function toSrt(lines: readonly LyricLine[]): string {
-  return lines.map((line, index) => (index + 1) + '\n' + srtTime(line.startSeconds) + ' --> ' + srtTime(line.endSeconds) + '\n' + line.text).join('\n\n') + (lines.length ? '\n' : '');
+  return writeSrt(lines.map(line => {
+    const startSeconds = Math.max(0, line.startSeconds);
+    return { ...line, startSeconds, endSeconds: Math.max(startSeconds, line.endSeconds) };
+  }));
 }
 export function toLyricsJson(title: string, artist: string, durationSeconds: number, lines: readonly LyricLine[]): string {
   return JSON.stringify({ schema: 'com.thepropervolume.karaoke-studio', version: 1, title, artist, durationSeconds, lyrics: lines }, null, 2) + '\n';

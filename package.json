@@ -68,6 +68,7 @@
     }
   },
   "dependencies": {
+    "@thepropervolume/karaoke-core": "file:vendor/thepropervolume-karaoke-core-0.1.0.tgz",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "yauzl": "3.4.0",
