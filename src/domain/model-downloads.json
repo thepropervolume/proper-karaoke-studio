@@ -1,0 +1,163 @@
+[
+  {
+    "id": "UVR-MDX-NET-Inst_HQ_3.onnx",
+    "label": "UVR MDX Instrumental HQ 3",
+    "group": "MDX-Net",
+    "purpose": "separation",
+    "adapter": "audio-separator",
+    "files": [
+      {
+        "name": "UVR-MDX-NET-Inst_HQ_3.onnx",
+        "url": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/UVR-MDX-NET-Inst_HQ_3.onnx",
+        "sha256": "317554b07fe1ea5279a77f2b1520a41ea4b93432560c4ffd08792c30fddf9adc"
+      }
+    ]
+  },
+  {
+    "id": "Kim_Vocal_2.onnx",
+    "label": "Kim Vocal 2",
+    "group": "MDX-Net",
+    "purpose": "separation",
+    "adapter": "audio-separator",
+    "files": [
+      {
+        "name": "Kim_Vocal_2.onnx",
+        "url": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/Kim_Vocal_2.onnx",
+        "sha256": "ce74ef3b6a6024ce44211a07be9cf8bc6d87728cc852a68ab34eb8e58cde9c8b"
+      }
+    ]
+  },
+  {
+    "id": "UVR_MDXNET_KARA_2.onnx",
+    "label": "UVR MDX Karaoke 2",
+    "group": "MDX-Net",
+    "purpose": "separation",
+    "adapter": "audio-separator",
+    "files": [
+      {
+        "name": "UVR_MDXNET_KARA_2.onnx",
+        "url": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/UVR_MDXNET_KARA_2.onnx",
+        "sha256": "bf32e15105a09c0f7dddd2b67346146334d6f3ecb399ed7638eba2ab07cbf5f4"
+      }
+    ]
+  },
+  {
+    "id": "5_HP-Karaoke-UVR.pth",
+    "label": "UVR Karaoke 5 HP",
+    "group": "VR Architecture",
+    "purpose": "backing",
+    "adapter": "audio-separator",
+    "files": [
+      {
+        "name": "5_HP-Karaoke-UVR.pth",
+        "url": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/5_HP-Karaoke-UVR.pth",
+        "sha256": "fe00891defbb61f4261500af22f7624f1a3df8dc75fa3998d1aece02e6be4537"
+      }
+    ]
+  },
+  {
+    "id": "6_HP-Karaoke-UVR.pth",
+    "label": "UVR Karaoke 6 HP",
+    "group": "VR Architecture",
+    "purpose": "backing",
+    "adapter": "audio-separator",
+    "files": [
+      {
+        "name": "6_HP-Karaoke-UVR.pth",
+        "url": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/6_HP-Karaoke-UVR.pth",
+        "sha256": "4ce7eaaa9e56f09366b788aebf6d3a72aec8145692c56f1e090e4e7e2d7ce65f"
+      }
+    ]
+  },
+  {
+    "id": "MDX23C-8KFFT-InstVoc_HQ.ckpt",
+    "label": "MDX23C Instrumental and Vocals HQ",
+    "group": "MDX23C",
+    "purpose": "separation",
+    "adapter": "audio-separator",
+    "files": [
+      {
+        "name": "MDX23C-8KFFT-InstVoc_HQ.ckpt",
+        "url": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/MDX23C-8KFFT-InstVoc_HQ.ckpt",
+        "sha256": "49d51472769e34a2501cd1da782346a3212555c3a5619fc2c53507445528d816"
+      },
+      {
+        "name": "model_2_stem_full_band_8k.yaml",
+        "url": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/mdx_model_data/mdx_c_configs/model_2_stem_full_band_8k.yaml",
+        "sha256": "451765e869b78dcb9ca9188a74da31f581b7254ff0e8b532aa76b974148de947"
+      }
+    ]
+  },
+  {
+    "id": "htdemucs",
+    "label": "Hybrid Transformer Demucs",
+    "group": "Demucs",
+    "purpose": "separation",
+    "adapter": "demucs",
+    "files": [
+      {
+        "name": "955717e8-8726e21a.th",
+        "url": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th",
+        "sha256": "8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4"
+      },
+      {
+        "name": "htdemucs.yaml",
+        "url": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/htdemucs.yaml",
+        "sha256": "239c445d0b14454d541ad8bd9bb271c9e536d267e8a4625208744cbb2e7bb66c"
+      }
+    ]
+  },
+  {
+    "id": "htdemucs_ft",
+    "label": "Hybrid Transformer Demucs · Fine Tuned",
+    "group": "Demucs",
+    "purpose": "separation",
+    "adapter": "demucs",
+    "files": [
+      {
+        "name": "f7e0c4bc-ba3fe64a.th",
+        "url": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/f7e0c4bc-ba3fe64a.th",
+        "sha256": "ba3fe64ae8ef66ac9a4857222ce48efbdc5eb3ad375cb79dd13debee5aaa4066"
+      },
+      {
+        "name": "d12395a8-e57c48e6.th",
+        "url": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/d12395a8-e57c48e6.th",
+        "sha256": "e57c48e6b0e38af4f7118d7bd08c49f0a0c0edf7d09143bdd902ea0d237303e6"
+      },
+      {
+        "name": "92cfc3b6-ef3bcb9c.th",
+        "url": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/92cfc3b6-ef3bcb9c.th",
+        "sha256": "ef3bcb9c8b40d14ae5d51b6db2587339cc12c6b77c0be151ce6d69002e087bf2"
+      },
+      {
+        "name": "04573f0d-f3cf25b2.th",
+        "url": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/04573f0d-f3cf25b2.th",
+        "sha256": "f3cf25b222c4eed7cd49dd8b2c9597d50c18bd154090f7b919cfa5f93cf22c49"
+      },
+      {
+        "name": "htdemucs_ft.yaml",
+        "url": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/htdemucs_ft.yaml",
+        "sha256": "69470b8c1bbd674437b51bc9fb491327a10ab0396b702c93389b9cf750016346"
+      }
+    ]
+  },
+  {
+    "id": "htdemucs_6s",
+    "label": "Hybrid Transformer Demucs · 6 Stems",
+    "group": "Demucs",
+    "purpose": "separation",
+    "adapter": "demucs",
+    "files": [
+      {
+        "name": "5c90dfd2-34c22ccb.th",
+        "url": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th",
+        "sha256": "34c22ccb381c6f9fdbf324f04e1e2fe21aaaf293f5ded163a162697ff9a02ddd"
+      },
+      {
+        "name": "htdemucs_6s.yaml",
+        "url": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/htdemucs_6s.yaml",
+        "sha256": "207405151270af8fd81c2373c25d27950916682ac91dca7884a11ce13dad6f58"
+      }
+    ]
+  }
+]

@@ -1,5 +1,6 @@
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
+const { resolveSeparatorExecutable } = require('./local-separator.cjs');
 const { separatorModels } = require('../domain/studio-options.json');
 
 const run = promisify(execFile);
@@ -37,7 +38,7 @@ function createModelDiscovery(execute = run) {
   const cache = new Map();
   return async function discoverModels({ adapter, executable, refresh = false } = {}) {
     if (!Object.hasOwn(separatorModels, adapter)) throw new Error('Choose a supported stem separator.');
-    if (adapter === 'dango') return { models: separatorModels.dango, source: 'provider' };
+    if (adapter !== 'audio-separator' && adapter !== 'demucs') return { models: separatorModels[adapter], source: 'provider' };
     if (typeof executable !== 'string' || !executable.trim() || executable.length > 4096) {
       return { models: separatorModels[adapter], source: 'fallback' };
     }
@@ -49,7 +50,8 @@ function createModelDiscovery(execute = run) {
       entry.result = (async () => {
         try {
           const args = adapter === 'demucs' ? ['--list-models'] : ['--list_models', '--list_format=json'];
-          const { stdout } = await execute(executable.trim(), args, { timeout: 15_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true, encoding: 'utf8' });
+          const command = await resolveSeparatorExecutable(adapter, executable.trim());
+          const { stdout } = await execute(command, args, { timeout: 15_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true, encoding: 'utf8' });
           const discovered = (adapter === 'demucs' ? parseDemucsModels : parseUvrModels)(stdout);
           const byId = new Map(discovered.map(model => [model.id, model]));
           if (byId.size) return { models: [...byId.values()].slice(0, 2000), source: 'installed' };
