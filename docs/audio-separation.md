@@ -16,7 +16,7 @@ Select **Demucs** in Preferences to split vocals, drums, bass and other instrume
 
 Set the separator path to `demucs` or the full path to its executable. Choose another supported model from the dropdown.
 
-    tpv-studio stems separate "original.wav" --adapter demucs --output-dir "separated" --add
+    tpv-karaoke-studio stems separate "original.wav" --adapter demucs --output-dir "separated" --add
 
 See [Demucs](https://github.com/facebookresearch/demucs), [Audio Separator](https://github.com/nomadkaraoke/python-audio-separator), and [UVR GUI](https://github.com/Anjok07/ultimatevocalremovergui) for installation and model details.
 

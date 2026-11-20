@@ -9,6 +9,7 @@ const yazl = require('yazl');
 const { CdgPlayer, cdgByteLimit, cdgHeight, cdgPacketBytes, cdgWidth } = require('../domain/cdg.ts');
 const { CdgEncoder, cdgExportFrameRate, cdgRgbFrameBytes } = require('../domain/cdg-encode.ts');
 const { alignmentLanguages, separatorModels } = require('../domain/studio-options.json');
+const { localSeparatorArgs } = require('./separation-options.cjs');
 
 const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.aiff', '.wma']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
@@ -266,10 +267,11 @@ async function separate(input, directory) {
   const executable = text(input.executable ?? separationDefaults[adapter].executable, 'separator executable', 4096).trim();
   const model = text(input.model ?? separationDefaults[adapter].model, 'model name', 160).trim();
   if (!executable || model === '.' || model === '..' || !/^[\w.-]+$/.test(model)) throw new Error('Configure a valid executable and model name in Preferences.');
+  const modelArgs = localSeparatorArgs(adapter, input.modelOptions);
   const outputDirectory = await fs.mkdtemp(path.join(directory, 'tpv-separated-'));
   const demucs = adapter === 'demucs';
-  if (demucs) await spawnTool(executable, ['--name', model, '--out', outputDirectory, source], 'Demucs');
-  else await spawnTool(executable, [source, '--model_filename', model, '--output_dir', outputDirectory], 'Audio Separator');
+  if (demucs) await spawnTool(executable, ['--name', model, '--out', outputDirectory, ...modelArgs, source], 'Demucs');
+  else await spawnTool(executable, [source, '--model_filename', model, '--output_dir', outputDirectory, ...modelArgs], 'Audio Separator');
   const stemDirectory = demucs ? path.join(outputDirectory, model, path.parse(source).name) : outputDirectory;
   const entries = await fs.readdir(stemDirectory, { withFileTypes: true }).catch(error => {
     if (error.code === 'ENOENT') return [];

@@ -7,13 +7,14 @@ import operations from '../main/studio-operations.cjs';
 import ktools from '../main/ktools.cjs';
 import kitImport from '../main/kit-import.cjs';
 import alignmentRuntime from '../main/alignment-runtime.cjs';
+import modelOptions from '../main/separation-options.cjs';
 import separatorModels from '../main/separator-models.cjs';
 import dango from '../main/dango-separator.cjs';
 import studioOptions from '../domain/studio-options.json';
-import { applyForcedAlignment } from '../domain/forced-alignment.ts';
 import { toAss, toLrc, toLyricsJson, toSrt } from '../domain/lyrics-formats.ts';
 import { toPortableKitProject } from '../domain/project.ts';
 import { addProjectStems, loadProject, projectCommand, projectFile, projectRevision, saveProject } from './project-commands.mjs';
+import { alignLyricsFromFiles, formatLyricsFile } from './standalone-lyrics.mjs';
 import { version } from '../../package.json';
 
 const commands = {
@@ -27,15 +28,18 @@ const commands = {
   'stems list': '',
   'stems edit': ' <stem> [--path <audio>] [--role <role>] [--voice <name>] [--name <name>] [--volume <gain>] [--duration <seconds>] [--ffmpeg <exe>]',
   'stems remove': ' <stem...>',
-  'stems separate': ' <audio> --output-dir <directory> [--add] [--adapter <audio-separator|demucs|dango>] [--executable <exe>] [--model <model>] [--ffmpeg <exe>] [--approve-cloud]',
+  'stems separate': ' <audio> --output-dir <directory> [--add] [--adapter <audio-separator|demucs|dango>] [--executable <exe>] [--model <model>] [--model-options <key=value,...>] [--ffmpeg <exe>] [--approve-cloud]',
   'stems models': ' [--adapter <audio-separator|demucs|dango>] [--executable <exe>]',
+  'audio models': ' [--adapter <audio-separator|demucs|dango>] [--executable <exe>]',
+  'audio process': ' --audio <file> --output <directory> [--adapter <audio-separator|demucs|dango>] [--model <model>] [--model-options <key=value,...>] [--executable <exe>] [--approve-cloud]',
   'lyrics import': ' <file> [--mapping <mapping.json>]',
   'lyrics show': ' [<line>]',
   'lyrics set': ' <text-file> | --text <lyrics>',
   'lyrics line': ' <line> [--text <text>] [--start <seconds>] [--end <seconds>]',
   'lyrics word': ' <line> <word> [--start <seconds>] [--end <seconds>]',
   'lyrics download': ' [--artist <artist>] [--title <title>] [--album <album>] [--duration <seconds>] [--source <source>] [--output-dir <directory>] [--ktools-home <directory>] [--python <exe>] [--input-lyrics <file>] [--no-format] [--force] [--import] [--use <plain|formatted|synced>]',
-  'lyrics align': ' [--audio <file>] [--language <code>] [--python <exe>]',
+  'lyrics format': ' --lyrics <file> --output <file> [--max-length <characters>] [--force]',
+  'lyrics align': ' [--audio <file>] [--lyrics <file>] [--output <file.lrc|file.srt|file.json>] [--language <code>] [--python <exe>] [--force]',
   'lyrics setup': ' [--status]',
   'lyrics languages': '',
   'export lyrics': ' <json|lrc|srt|cdg> --output <file> [--force] [--original] [--ffmpeg <exe>]',
@@ -47,10 +51,11 @@ const commands = {
 
 const booleanOptions = new Set(['help', 'json', 'force', 'add', 'import', 'no-format', 'clear', 'original', 'status', 'approve-cloud']);
 const settingsKeys = Object.keys(operations.defaultSettings);
+const commandName = 'tpv-karaoke-studio';
 const help = 'The Proper Volume Karaoke Studio ' + version + '\n\n' +
-  'Usage: tpv-studio [--project <file>] [--settings <file>] [--json] <command>\n\n' +
+  'Usage: ' + commandName + ' [--project <file>] [--settings <file>] [--json] <command>\n\n' +
   Object.entries(commands).map(([command, syntax]) => '  ' + command + syntax).join('\n') + '\n\n' +
-  'Project default: studio.tpv.json in the current directory. Use --help after a command for its options.\n';
+  'Project commands default to studio.tpv.json in the current directory. Use --help after a command for its options.\n';
 
 function parse(argv, options) {
   try {
@@ -123,7 +128,7 @@ async function exportProject(action, args, settings) {
         const duration = project.durationSeconds || project.lyrics.reduce((end, line) => Math.max(end, line.endSeconds), 0);
         await operations.exportCdg({
           duration,
-          ass: toAss(project.title, project.artist, duration, project.lyrics, 'cdg'),
+          ass: toAss(project.title, project.artist, duration, project.lyrics, 'cdg', project.lyricStyle),
           ffmpegPath: args.options.ffmpeg || settings.ffmpegPath,
         }, destination, overwrite);
       }
@@ -139,9 +144,10 @@ async function exportProject(action, args, settings) {
       duration: project.durationSeconds,
       stems: project.stems,
       backgroundPath: project.backgroundPath,
+      backgroundColor: project.lyricStyle?.backgroundColor,
       cdgPath: project.lyrics.length ? null : project.importedCdg,
       ffmpegPath: args.options.ffmpeg || settings.ffmpegPath,
-      ass: toAss(project.title, project.artist, project.durationSeconds, project.lyrics),
+      ass: toAss(project.title, project.artist, project.durationSeconds, project.lyrics, 'video', project.lyricStyle),
     }, destination, overwrite);
   } else {
     const { json, lrc, srt } = lyricContents(project);
@@ -199,29 +205,28 @@ async function fetchLyrics(args, dependencies) {
 
 async function align(args, settings) {
   positionals(args, 0);
-  const file = projectFile(args);
-  const project = await loadProject(file);
-  if (!project.lyrics.length) throw new Error('Import or set the lyrics before aligning.');
-  const candidate = project.stems.find(stem => stem.role === 'lead') || project.stems.find(stem => stem.role !== 'instrumental');
-  const audioPath = args.options.audio ? path.resolve(args.options.audio) : candidate?.path;
-  if (!audioPath) usage('Select a vocal or original audio file with --audio.');
-  await operations.localFile(audioPath, operations.AUDIO_EXTENSIONS);
+  const { options } = args;
+  const supplied = options.lyrics !== undefined;
+  if (supplied) requiredOption(options, 'lyrics');
+  if (options.output !== undefined) {
+    requiredOption(options, 'output');
+    if (!supplied || options.project !== undefined) usage('--output requires --lyrics and standalone alignment. Use --project to save an editable project instead.');
+  }
+  if (options.project !== undefined) requiredOption(options, 'project');
+  if (options.force && !options.output) usage('--force requires --output.');
   const language = String(args.options.language ?? settings.alignmentLanguage ?? 'en').trim().toLowerCase();
-  if (!studioOptions.alignmentLanguages.includes(language)) usage('Choose a supported lyric language with tpv-studio lyrics languages.');
+  if (!studioOptions.alignmentLanguages.includes(language)) usage('Choose a supported lyric language with ' + commandName + ' lyrics languages.');
   const configured = settings.lyricAlignerExecutable;
   const legacyDefault = /^python3?(?:\.exe)?$/i.test(configured);
   const packagedScript = path.join(__dirname, 'scripts', 'align_lyrics.py');
   const script = await access(packagedScript).then(() => packagedScript, () => path.join(__dirname, '..', 'scripts', 'align_lyrics.py'));
-  const result = await operations.alignLyrics({
-    audioPath,
-    language,
-    lyrics: project.lyrics.map(line => line.text),
-  }, script, () => args.options.python || (!legacyDefault && configured)
-    || alignmentRuntime.ensureAlignmentRuntime(alignmentRuntime.alignmentRuntimeRoot(), alignmentProgress(args)));
-  const lyrics = applyForcedAlignment(project.lyrics, result.words, result.duration);
-  const durationSeconds = project.durationSeconds || result.duration;
-  await saveProject(file, { ...project, lyrics, durationSeconds }, { expectedRevision: projectRevision(project) });
-  return { project: file, audio: audioPath, alignedWords: result.words.length };
+  const prepare = () => options.python || (!legacyDefault && configured)
+    || alignmentRuntime.ensureAlignmentRuntime(alignmentRuntime.alignmentRuntimeRoot(), alignmentProgress(args));
+  return alignLyricsFromFiles({
+    file: !supplied || options.project ? projectFile(args) : null,
+    lyricsFile: options.lyrics, audio: options.audio, output: options.output, force: options.force,
+    language, preferences: settingsFile(options),
+  }, input => operations.alignLyrics(input, script, prepare));
 }
 
 function alignmentProgress(args) {
@@ -254,21 +259,28 @@ function separationOptions(args, settings) {
   };
 }
 
-async function separate(args, settings, dependencies) {
-  positionals(args, 1);
+async function separate(args, settings, dependencies, standalone = false) {
+  positionals(args, standalone ? 0 : 1);
+  if (standalone && args.options.project !== undefined) usage('--project does not apply to audio process.');
   const options = separationOptions(args, settings);
   if (options.adapter === 'dango' && !args.options['approve-cloud']) usage('Dango uploads the selected file and may spend credits. Confirm with --approve-cloud.');
+  let model;
+  try {
+    const requested = modelOptions.parseModelOptions(args.options['model-options']);
+    model = modelOptions.validatedModelOptions(options.adapter, requested);
+  } catch (error) { usage(error.message); }
   const credentials = options.adapter === 'dango'
     ? dango.normalizeDangoCredentials({ appKey: process.env.DANGO_APP_KEY, appSecret: process.env.DANGO_APP_SECRET })
     : null;
   const file = projectFile(args);
   const project = args.options.add ? await loadProject(file) : null;
-  const directory = path.resolve(requiredOption(args.options, 'output-dir'));
+  const directory = path.resolve(requiredOption(args.options, standalone ? 'output' : 'output-dir'));
+  const sourcePath = path.resolve(standalone ? requiredOption(args.options, 'audio') : args.positional[0]);
+  await operations.localFile(sourcePath, operations.AUDIO_EXTENSIONS);
   await mkdir(directory, { recursive: true });
-  const sourcePath = path.resolve(args.positional[0]);
   const result = credentials
-    ? await dango.separateWithDango({ credentials, sourcePath, outputDirectory: directory, model: options.model })
-    : await operations.separate({ ...options, sourcePath }, directory);
+    ? await dango.separateWithDango({ credentials, sourcePath, outputDirectory: directory, model: options.model, modelOptions: model })
+    : await operations.separate({ ...options, sourcePath, modelOptions: model }, directory);
   if (project) {
     try {
       const updated = await addProjectStems(project, result.files, { ...dependencies, ffmpegPath: args.options.ffmpeg || settings.ffmpegPath });
@@ -297,7 +309,9 @@ async function openDesktop(args) {
     const available = await access(executable).then(() => true, () => false);
     if (!available) continue;
     await new Promise((resolve, reject) => {
-      const child = spawn(executable, [...prefix, '--studio-project=' + file], { detached: true, stdio: 'ignore' });
+      const env = { ...process.env };
+      delete env.ELECTRON_RUN_AS_NODE;
+      const child = spawn(executable, [...prefix, '--studio-project=' + file], { detached: true, stdio: 'ignore', env });
       child.once('error', reject);
       child.once('spawn', () => { child.unref(); resolve(); });
     });
@@ -332,11 +346,23 @@ async function dispatch(command, args) {
     return { projectPath: file, project, mediaDirectory };
   }
   if (command === 'stems separate') return separate(args, settings, dependencies);
-  if (command === 'stems models') {
+  if (command === 'audio process') return separate(args, settings, dependencies, true);
+  if (command === 'stems models' || command === 'audio models') {
     positionals(args, 0);
-    return separatorModels.discoverModels(separationOptions(args, settings));
+    const options = separationOptions(args, settings);
+    const catalog = await separatorModels.discoverModels(options);
+    return command === 'audio models' ? { ...catalog, modelOptions: modelOptions.listModelOptions(options.adapter) } : catalog;
   }
   if (command === 'lyrics download') return fetchLyrics(args, dependencies);
+  if (command === 'lyrics format') {
+    positionals(args, 0);
+    if (args.options.project !== undefined) usage('--project does not apply to lyrics format.');
+    return formatLyricsFile({
+      lyricsFile: requiredOption(args.options, 'lyrics'), output: requiredOption(args.options, 'output'),
+      width: args.options['max-length'] === undefined ? undefined : Number(args.options['max-length']),
+      force: args.options.force, preferences,
+    });
+  }
   if (command === 'lyrics align') return align(args, settings);
   if (command === 'lyrics setup') return alignmentSetup(args);
   if (command === 'lyrics languages') return alignmentLanguages(args);
@@ -352,10 +378,10 @@ async function main(argv) {
     ...Object.values(commands).flatMap(syntax => [...syntax.matchAll(/--([a-z-]+)/g)].map(match => match[1])),
   ]), strict: false, allowPositionals: true }).positionals;
   const command = group + ' ' + action;
-  if (!Object.hasOwn(commands, command)) usage('Unknown command. Run tpv-studio --help.');
+  if (!Object.hasOwn(commands, command)) usage('Unknown command. Run ' + commandName + ' --help.');
   const names = [...commands[command].matchAll(/--([a-z-]+)/g)].map(match => match[1]);
   const parsed = parse(argv, optionDefinitions(['project', 'settings', 'json', 'help', ...names]));
-  if (parsed.values.help) { console.log('Usage: tpv-studio ' + command + commands[command] + ' [--project <file>] [--settings <file>] [--json]'); return; }
+  if (parsed.values.help) { console.log('Usage: ' + commandName + ' ' + command + commands[command] + ' [--project <file>] [--settings <file>] [--json]'); return; }
   const result = await dispatch(command, { positional: parsed.positionals.slice(2), options: parsed.values });
   console.log(JSON.stringify(result, null, parsed.values.json ? undefined : 2));
 }

@@ -2,7 +2,7 @@
 
 Studio's CLI can read a timed lyric JSON file from another application when you identify the cue and timing fields in a mapping file.
 
-    tpv-studio lyrics import external-lyrics.json --mapping lyric-fields.json
+    tpv-karaoke-studio lyrics import external-lyrics.json --mapping lyric-fields.json
 
 For example, suppose the source file looks like this.
 
