@@ -1,6 +1,6 @@
 # Prototype scope
 
-Version 0.6.1 imports and previews local stems, aligns supplied lyrics with WhisperX, captures line or word timing manually, and exports an MP4 or TPV kit. Studio has one editor and shares editable projects with the [CLI](cli.md). It uses Karaoke Core for LRC and SRT, and the CLI can download lyrics through the user's local TPV ktools installation.
+Version 0.7.0 imports and previews local stems, aligns supplied lyrics with WhisperX, captures line or word timing manually, and exports an MP4 or TPV kit. Studio uses one editor in a [Booth-style workspace](workspace.md) and shares editable projects with the [CLI](cli.md). It uses Karaoke Core for LRC and SRT, and the CLI can download lyrics through the user's local TPV ktools installation.
 
 ## Available
 

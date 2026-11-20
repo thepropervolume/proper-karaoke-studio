@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { KaraFunPlayer as KaraokePlayer, type KaraFunPlayerEvent as KaraokePlayerEvent, type KaraFunStemSource as KaraokeStemSource } from '../shared/from-booth/display/karafun-player';
 import { paintKaraFunLyrics } from '../shared/from-booth/display/karafun-lyrics';
 import { finishTimedWord, newLyricLines, recordTimedWordStart, seedTimedWords, timedWordCount, toPortableKitProject, toRenderTiming, type LyricLine, type StudioProject, type StudioRole, type StudioStem } from '../domain/project';
@@ -7,14 +7,51 @@ import { applyForcedAlignment } from '../domain/forced-alignment';
 import { CdgPlayer, cdgByteLimit } from '../domain/cdg';
 import { CdgPreview } from './CdgPreview';
 import { WaveformTimeline } from './WaveformTimeline';
+import { StudioIcon, type StudioIconName } from './StudioIcon';
+import { WorkspaceSeparator, defaultInspectorWidth, inspectorMax, minInspectorWidth } from './WorkspaceSeparator';
 import { VoiceRecorder } from './VoiceRecorder';
 import { version } from '../../package.json';
+import markDark from '../../assets/branding/icon-dark.svg';
+import markLight from '../../assets/branding/icon-light.svg';
 
 const roles: StudioRole[] = ['instrumental', 'lead', 'backing', 'other'];
 const allAudible = { instrumental: 1, lead: 1, backing: 1, other: 1 } as const;
 const seconds = (value: number) => Math.floor(value / 60) + ':' + (value % 60).toFixed(1).padStart(4, '0');
 const safeName = (value: string) => value.trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 100) || 'Untitled';
 const basename = (value: string) => value.split(/[\\/]/).at(-1);
+
+const workspaces = [
+  { id: 'audio', label: 'Audio Stems', icon: 'audio' },
+  { id: 'lyrics', label: 'Lyrics', icon: 'lyrics' },
+  { id: 'export', label: 'Export', icon: 'export' },
+] as const;
+type Workspace = typeof workspaces[number]['id'];
+type Appearance = { theme: 'day' | 'night'; accent: 'blue' | 'pink' | 'purple' };
+const appearanceKey = 'tpv-studio-appearance';
+const panelWidthKey = 'tpv-studio-inspector-width';
+
+function readAppearance(): Appearance {
+  try {
+    const saved: Partial<Appearance> = JSON.parse(window.localStorage.getItem(appearanceKey) || '{}');
+    return { theme: saved.theme === 'day' ? 'day' : 'night',
+      accent: saved.accent === 'pink' || saved.accent === 'purple' ? saved.accent : 'blue' };
+  } catch { return { theme: 'night', accent: 'blue' }; }
+}
+
+function readInspectorWidth() {
+  try {
+    const stored = Number(window.localStorage.getItem(panelWidthKey));
+    if (Number.isFinite(stored) && stored >= minInspectorWidth) return stored;
+  } catch { /* Preferences remain usable for this session. */ }
+  return defaultInspectorWidth;
+}
+
+function IconButton({ icon, label, hint = label, onClick, disabled, className = '' }: {
+  icon: StudioIconName; label: string; hint?: string; onClick(): void; disabled?: boolean; className?: string;
+}) {
+  return <button type="button" className={'icon-button ' + className} aria-label={label} data-tip={hint}
+    disabled={disabled} onClick={onClick}><StudioIcon name={icon} /></button>;
+}
 
 async function mediaDuration(url: string): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -32,6 +69,14 @@ export function App() {
   const linesRef = useRef<LyricLine[]>([]);
   const canvas = useRef<HTMLCanvasElement | null>(null), stemRef = useRef<StudioStem[]>([]);
   const [stems, setStems] = useState<StudioStem[]>([]);
+  const [workspace, setWorkspace] = useState<Workspace>('audio');
+  const [appearance, setAppearance] = useState(readAppearance);
+  const [storedInspectorWidth, setInspectorWidth] = useState(readInspectorWidth);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [draftOpen, setDraftOpen] = useState(true);
+  const inspectorMaximum = inspectorMax(viewportWidth);
+  const inspectorWidth = Math.min(inspectorMaximum, storedInspectorWidth);
   const [alignmentStemId, setAlignmentStemId] = useState('');
   const [lines, setLines] = useState<LyricLine[]>([]);
   const [title, setTitle] = useState(''), [artist, setArtist] = useState('');
@@ -57,6 +102,20 @@ export function App() {
   const [recoveryEntries, setRecoveryEntries] = useState<StudioRecoveryEntry[]>([]);
   const [recoveryError, setRecoveryError] = useState('');
   const initialProjectChecked = useRef(false);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(appearanceKey, JSON.stringify(appearance)); } catch { /* Session-only appearance. */ }
+  }, [appearance]);
+  useEffect(() => {
+    const resize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
+  const resizeInspector = (value: number) => {
+    const next = Math.min(inspectorMaximum, Math.max(minInspectorWidth, Math.round(value)));
+    setInspectorWidth(next);
+    try { window.localStorage.setItem(panelWidthKey, String(next)); } catch { /* Session-only size. */ }
+  };
 
   useEffect(() => {
     player.current = new KaraokePlayer({ onEvent(event: KaraokePlayerEvent) {
@@ -95,8 +154,9 @@ export function App() {
       });
     };
     paint();
-    window.addEventListener('resize', paint);
-    return () => window.removeEventListener('resize', paint);
+    const observer = new ResizeObserver(paint);
+    if (canvas.current) observer.observe(canvas.current);
+    return () => observer.disconnect();
   }, [renderTiming, position]);
 
   const loadStems = useCallback(async (next: StudioStem[], projectDuration?: number) => {
@@ -161,6 +221,8 @@ export function App() {
     setLines(project.lyrics);
     setLyricsDraft(draft ?? project.lyrics.map(line => line.text).join('\n'));
     setDraftPending(draft !== null);
+    setWorkspace(project.lyrics.length || project.importedCdg || draft ? 'lyrics' : 'audio');
+    setDraftOpen(!project.lyrics.length || draft !== null);
     setNextLine(0); setNextWord(0); setTiming(false);
     setCdgPath(source);
     setDecodedCdg(graphics);
@@ -275,6 +337,7 @@ export function App() {
   const makeLines = () => {
     setLines(newLyricLines(lyricsDraft, duration || 240)); setNextLine(0); setTiming(false);
     setDraftPending(false);
+    if (lyricsDraft.trim()) setDraftOpen(false);
     setStatus('Lyrics added. Start playback and tap each line as it is sung.');
   };
   const beginTiming = async () => {
@@ -387,6 +450,7 @@ export function App() {
         setLines(cues);
         setLyricsDraft(cues.map(line => line.text).join('\n'));
         setDraftPending(false);
+        setDraftOpen(false);
         setNextLine(0); setNextWord(0); setTiming(false);
         setStatus('Imported ' + cues.length + ' lines from ' + file.name + '.');
         return;
@@ -397,6 +461,7 @@ export function App() {
       if (imported.artist) setArtist(imported.artist);
       setLyricsDraft(imported.lines.map(line => line.text).join('\n'));
       setDraftPending(false);
+      setDraftOpen(false);
       setStatus('Imported ' + imported.lines.length + ' lyric cues from ' + file.name + '.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
@@ -545,146 +610,306 @@ export function App() {
     finally { setBusy(false); }
   };
 
-  return <div className="app-shell">
-    <header className="topbar" inert={projectTransition || recoveryOpen}>
-      <div className="brand-mark">TPV</div><div className="brand-title">The Proper Volume Karaoke Studio</div>
-      <input className="project-name" aria-label="Song title" placeholder="Song title" value={title} onChange={event => setTitle(event.target.value)} />
-      <input className="project-name" aria-label="Artist" placeholder="Artist" value={artist} onChange={event => setArtist(event.target.value)} />
-      <button disabled={busy || timing} onClick={() => void openProject()}>Open Project</button>
-      <button disabled={busy || timing} onClick={() => void saveProject()} title={openedProject?.file}>Save Project</button>
-      {openedProject && <button disabled={busy || timing} onClick={() => void saveProject(true)}>Save As</button>}
-      <button onClick={() => setSettingsOpen(true)} aria-label="Open preferences">⚙ Preferences</button>
+  const editorInert = projectTransition || recoveryOpen || voiceRecorderOpen || settingsOpen || appearanceOpen;
+  const shortcutActions = useRef({ open: () => {}, save: (_as: boolean) => {}, play: () => {}, preferences: () => {}, enabled: false });
+  shortcutActions.current = {
+    open: () => { void openProject(); },
+    save: as => { void saveProject(as); },
+    play: () => { void togglePlay(); },
+    preferences: () => setSettingsOpen(true),
+    enabled: !editorInert && !busy && !timing,
+  };
+  useEffect(() => {
+    const handle = (event: KeyboardEvent) => {
+      const actions = shortcutActions.current;
+      if (!actions.enabled || event.defaultPrevented || event.repeat) return;
+      if (event.key === ',' && (event.ctrlKey || event.metaKey || event.altKey)) {
+        event.preventDefault(); actions.preferences(); return;
+      }
+      if (event.altKey) return;
+      if (event.ctrlKey || event.metaKey) {
+        const key = event.key.toLowerCase();
+        if (key === 'o') { event.preventDefault(); actions.open(); }
+        if (key === 's') { event.preventDefault(); actions.save(event.shiftKey); }
+        return;
+      }
+      if (event.code === 'Space' && !(event.target as HTMLElement | null)?.closest('input, textarea, select, button, a, summary, [contenteditable]')) {
+        event.preventDefault(); actions.play();
+      }
+    };
+    window.addEventListener('keydown', handle);
+    return () => window.removeEventListener('keydown', handle);
+  }, []);
+
+  const canStartTiming = Boolean(lines.length && generation.current && !busy && !timing);
+  const activeCue = lines.findIndex(line => position >= line.startSeconds && position < line.endSeconds);
+  const projectTitle = title.trim() || 'Untitled Project';
+  const fileName = openedProject ? basename(openedProject.file) : undefined;
+  const projectActionsDisabled = busy || timing;
+
+  return <div className="app-shell" data-theme={appearance.theme} data-accent={appearance.accent}
+    style={{ '--inspector-width': inspectorWidth + 'px' } as CSSProperties}>
+    <header className="topbar" inert={editorInert}>
+      <div className="studio-brand">
+        <img src={appearance.theme === 'day' ? markLight : markDark} alt="" />
+        <span><strong>TPV</strong><small>Karaoke Studio</small></span>
+      </div>
+      <div className="topbar-identity">
+        <strong title={fileName || projectTitle}>{projectTitle}</strong>
+        <span className="version-pill" aria-label="Application version">v{version}</span>
+      </div>
+      <div className="topbar-status" role="status">
+        <span className={'status-dot' + (playing ? ' live' : '')} aria-hidden="true" />
+        <span>{playing ? 'Playing' : busy ? 'Working…' : projectChanged || draftPending ? 'Unsaved changes' : fileName ? 'Saved' : 'Ready'}</span>
+      </div>
+      <div className="topbar-actions">
+        <IconButton icon="folder" label="Open Project" hint="Open Project (Ctrl/⌘+O)" disabled={projectActionsDisabled} onClick={() => void openProject()} />
+        <IconButton icon="save" label="Save Project" hint="Save Project (Ctrl/⌘+S)" disabled={projectActionsDisabled} onClick={() => void saveProject()} />
+        {openedProject && <IconButton icon="copy" label="Save As" hint="Save As (Ctrl/⌘+Shift+S)" disabled={projectActionsDisabled} onClick={() => void saveProject(true)} />}
+        <span className="toolbar-divider" aria-hidden="true" />
+        <IconButton icon="palette" label="Appearance" className="accent-button" onClick={() => setAppearanceOpen(true)} />
+        <IconButton icon="settings" label="Preferences" hint="Preferences (Ctrl/⌘/Alt+,)" onClick={() => setSettingsOpen(true)} />
+      </div>
     </header>
-    <main className="main-grid" inert={projectTransition || recoveryOpen}>
-      <section className="panel">
-        <div className="section-title">Audio Stems</div><h2>Build your mix</h2>
-        <p className="muted">Add audio tracks and label each voice so the mix and kit stay organized.</p>
-        <div className="toolbar">
-          <label className="button-like"><input className="hidden-input" type="file" accept="audio/*,.wav,.flac,.mp3,.m4a,.ogg" multiple onChange={event => { void onAudioFiles(event.target.files); event.currentTarget.value = ''; }} />＋ Import Stems</label>
-          <button onClick={() => void window.studio.chooseAudioFiles().then(addLocalPaths)}>Browse</button>
-          <button disabled={busy || timing || stems.length >= 12} onClick={() => {
-            if (generation.current) player.current?.pause(generation.current);
-            setPlaying(false);
-            setVoiceRecorderOpen(true);
-          }}>Record a stem</button>
+
+    <main className="studio-workspace" inert={editorInert}>
+      <nav className="sidebar" aria-label="Workspace">
+        <div className="eyebrow">Workspace</div>
+        {workspaces.map(item => <button type="button" key={item.id} className={'nav-item' + (workspace === item.id ? ' active' : '')}
+          aria-current={workspace === item.id ? 'page' : undefined} aria-controls="editor-panel" onClick={() => setWorkspace(item.id)}>
+          <StudioIcon name={item.icon} /><span>{item.label}</span>
+        </button>)}
+        <div className="sidebar-project">
+          <div className="eyebrow">Project</div>
+          <button type="button" className="nav-item" disabled={projectActionsDisabled} onClick={() => void showRecovery()}>
+            <StudioIcon name="history" /><span>Recovery</span>
+            {recoveryEntries.length > 0 && <span className="nav-count">{recoveryEntries.length}</span>}
+          </button>
         </div>
-        <div className="dropzone" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void onAudioFiles(event.dataTransfer.files); }}>Drop audio files here</div>
-        <div className="stack" style={{ marginTop: 12 }}>
-          {stems.map(stem => <article className="stem-card" key={stem.id}>
-            <div className="row spaced"><span className="filename" title={stem.name}>{stem.name}</span><button onClick={() => removeStem(stem.id)} aria-label={'Remove ' + stem.name}>×</button></div>
-            <div className="row">
-              <select aria-label={stem.name + ' role'} value={stem.role} onChange={event => updateStem(stem.id, { role: event.target.value as StudioRole })}>
-                {roles.map(role => <option key={role} value={role}>{role}</option>)}
+      </nav>
+
+      <section className="panel preview-panel" aria-labelledby="preview-title">
+        <div className="page-heading">
+          <div><div className="eyebrow">Project</div><h1 id="preview-title">Singer Preview</h1></div>
+          <IconButton icon="image" label="Choose Background" disabled={Boolean(cdgPlayer) || busy} onClick={() => void chooseBackground()} />
+        </div>
+        <div className="project-fields">
+          <label className="field-label">Song Title<input aria-label="Song title" placeholder="Untitled song" value={title} onChange={event => setTitle(event.target.value)} /></label>
+          <label className="field-label">Artist<input aria-label="Artist" placeholder="Artist name" value={artist} onChange={event => setArtist(event.target.value)} /></label>
+        </div>
+        <div className="preview-well">
+          <div className="preview-stage" aria-label="Karaoke lyrics preview">
+            {cdgPlayer ? <CdgPreview player={cdgPlayer} seconds={position} playing={playing} livePosition={livePosition} /> : <>
+              {background?.url && <img src={background.url} alt="Selected karaoke background" />}
+              <canvas ref={canvas} />
+              {!lines.length && !background?.url && <div className="preview-empty">
+                <StudioIcon name="display" />
+                <strong>Preview is ready</strong>
+                <span>Import lyrics to see them here.</span>
+                <button type="button" onClick={() => { setWorkspace('lyrics'); setDraftOpen(true); }}>Add Lyrics</button>
+              </div>}
+            </>}
+          </div>
+        </div>
+      </section>
+
+      <WorkspaceSeparator width={inspectorWidth} maximum={inspectorMaximum} resize={resizeInspector} />
+
+      <aside className="panel inspector" id="editor-panel" aria-label={workspaces.find(item => item.id === workspace)?.label}>
+        {workspace === 'audio' && <>
+          <div className="page-heading">
+            <div><div className="eyebrow">Project Audio</div><h2>Audio Stems</h2></div>
+            {stems.length > 0 && <span className="summary-pill">{stems.length} {stems.length === 1 ? 'stem' : 'stems'}</span>}
+          </div>
+          <div className="toolbar inspector-actions">
+            <button type="button" className="primary" disabled={busy} onClick={() => void window.studio.chooseAudioFiles().then(addLocalPaths).catch(cause => setError(String(cause)))}>
+              <StudioIcon name="file" /> Import Audio
+            </button>
+            <button type="button" disabled={busy || timing || stems.length >= 12} onClick={() => {
+              if (generation.current) player.current?.pause(generation.current);
+              setPlaying(false);
+              setVoiceRecorderOpen(true);
+            }}><StudioIcon name="microphone" /> Record Stem</button>
+          </div>
+          <div className={'dropzone' + (stems.length ? ' compact' : '')} onDragOver={event => event.preventDefault()} onDrop={event => {
+            event.preventDefault();
+            if (!busy) void onAudioFiles(event.dataTransfer.files);
+          }}>
+            {!stems.length && <StudioIcon name="audio" />}
+            <strong>Drop audio files here</strong>
+            {!stems.length && <span className="muted">Import a song or its separate audio tracks.</span>}
+          </div>
+          <div className="stack">
+            {stems.map(stem => <article className="stem-card" key={stem.id}>
+              <div className="row spaced stem-title">
+                <StudioIcon name="audio" />
+                <span className="filename grow" title={stem.name}>{stem.name}</span>
+                <IconButton icon="close" label={'Remove ' + stem.name} hint="Remove stem" className="small-button" onClick={() => removeStem(stem.id)} />
+              </div>
+              <div className="stem-fields">
+                <select aria-label={stem.name + ' role'} value={stem.role} onChange={event => updateStem(stem.id, { role: event.target.value as StudioRole })}>
+                  {roles.map(role => <option key={role} value={role}>{role[0].toUpperCase() + role.slice(1)}</option>)}
+                </select>
+                <input aria-label={stem.name + ' voice label'} placeholder="Voice or part" value={stem.voice} onChange={event => updateStem(stem.id, { voice: event.target.value })} />
+              </div>
+              <label className="row stem-volume muted"><span>Volume</span>
+                <input aria-label={stem.name + ' volume'} className="grow" type="range" min="0" max="1" step="0.01" value={stem.volume} onChange={event => updateStemVolume(stem.id, Number(event.target.value))} />
+                <output>{Math.round(stem.volume * 100)}%</output>
+              </label>
+            </article>)}
+          </div>
+          <div className="inspector-section">
+            <button type="button" disabled={!stems.length || busy} onClick={() => void separate()}>Separate a Source Track…</button>
+            <p className="muted">Model and separator are set in Preferences.</p>
+          </div>
+        </>}
+
+        {workspace === 'lyrics' && <>
+          <div className="page-heading">
+            <div><div className="eyebrow">Lyric Editor</div><h2>Cue Sheet</h2></div>
+            <span className="summary-pill">{lines.length} {lines.length === 1 ? 'cue' : 'cues'}</span>
+          </div>
+          <div className="toolbar inspector-actions">
+            <label className="button-like"><StudioIcon name="file" /> Import Lyrics
+              <input className="file-input" aria-label="Import Lyrics" type="file" accept=".txt,.json,.lrc,.elrc,.srt,.cdg" onChange={event => {
+                const file = event.target.files?.[0];
+                if (file) void importLyrics(file);
+                event.currentTarget.value = '';
+              }} />
+            </label>
+            {cdgPath && <button type="button" disabled={busy} onClick={() => { setCdgPath(null); setDecodedCdg(null); setStatus('CD+G graphics removed.'); }}>Remove CD+G</button>}
+          </div>
+          <details className="workspace-details" open={draftOpen} onToggle={event => setDraftOpen(event.currentTarget.open)}>
+            <summary>Lyrics Text {draftPending && <span className="summary-pill">Draft</span>}</summary>
+            <div className="stack detail-content">
+              <textarea rows={5} className="small-input" aria-label="Lyrics text" placeholder="Paste lyrics, one line per cue" value={lyricsDraft} onChange={event => {
+                const draft = event.target.value;
+                setLyricsDraft(draft);
+                setDraftPending(Boolean(draft.trim()) && draft.trim() !== lines.map(line => line.text).join('\n').trim());
+              }} />
+              <button type="button" disabled={!lyricsDraft.trim() || timing || busy} onClick={makeLines}>Build Cues</button>
+            </div>
+          </details>
+          <div className="timing-tools">
+            <label className="field-label">Audio for Sync
+              <select value={alignmentStemId} onChange={event => setAlignmentStemId(event.target.value)} disabled={!stems.length || busy}>
+                {!stems.length && <option value="">Import audio first</option>}
+                {stems.filter(stem => stem.path).map(stem => <option key={stem.id} value={stem.id}>{stem.name}{stem.role === 'lead' && !/\blead vocal\b/i.test(stem.name) ? ' · lead' : ''}</option>)}
               </select>
-              <input className="small-input" aria-label={stem.name + ' voice label'} placeholder="Voice / part (optional)" value={stem.voice} onChange={event => updateStem(stem.id, { voice: event.target.value })} />
+            </label>
+            <div className="toolbar">
+              <button type="button" className="primary" aria-label="Sync lyrics with AI" title="Align your supplied lyrics to the selected audio"
+                disabled={!lines.length || !alignmentStemId || busy || timing} onClick={() => void alignLyrics()}>AI Sync</button>
+              <button type="button" title="Tap line starts with Space during playback" disabled={!canStartTiming} onClick={() => void beginTiming()}>Time Lines</button>
+              <button type="button" title="Tap word starts with Space during playback" disabled={!canStartTiming} onClick={() => void beginWordTiming()}>Time Words</button>
             </div>
-            <label className="row muted">Stem volume<input aria-label={stem.name + ' volume'} type="range" min="0" max="1" step="0.01" value={stem.volume} onChange={event => updateStemVolume(stem.id, Number(event.target.value))} /></label>
-          </article>)}
-        </div>
-        <button style={{ marginTop: 12 }} disabled={!stems.length || busy} onClick={() => void separate()}>Separate a source track…</button>
-        <p className="muted">Uses the local separator configured in Preferences.</p>
-        <div className="section-title" style={{ marginTop: 26 }}>Lyrics</div>
-        <div className="toolbar">
-          <label className="button-like"><input className="hidden-input" type="file" accept=".txt,.json,.lrc,.elrc,.srt,.cdg" onChange={event => { const file = event.target.files?.[0]; if (file) void importLyrics(file); event.currentTarget.value = ''; }} />＋ Import Lyrics</label>
-          <button onClick={makeLines}>Build from text</button>
-          {cdgPath && <button disabled={busy} onClick={() => { setCdgPath(null); setDecodedCdg(null); setStatus('CD+G graphics removed.'); }}>Remove CD+G</button>}
-        </div>
-        <textarea rows={5} className="small-input" placeholder="Paste lyrics, one line per cue" value={lyricsDraft} onChange={event => {
-          const draft = event.target.value;
-          setLyricsDraft(draft);
-          setDraftPending(Boolean(draft.trim()) && draft.trim() !== lines.map(line => line.text).join('\n').trim());
-        }} />
-        <div className="toolbar">
-          <button className="accent" disabled={!lines.length || !generation.current || busy} onClick={() => void beginTiming()}>Start line timing</button>
-          <button disabled={!lines.length || !generation.current || busy} onClick={() => void beginWordTiming()}>Start word timing</button>
-          <button className="primary" disabled={!lines.length || !stems.some(stem => stem.path) || busy} onClick={() => void alignLyrics()}>Sync supplied lyrics with AI</button>
-          {timing && <button className="primary" onClick={captureMode === 'word' ? tapWord : tapLine}>{captureMode === 'word' ? `Tap next word · ${Math.min(nextWord + 1, wordCount)}/${wordCount}` : `Tap next line · ${Math.min(nextLine + 1, lines.length)}/${lines.length}`}</button>}
-          {timing && <button onClick={finishTiming}>Finish timing</button>}
-        </div>
-        <label className="field-label">Audio for synchronization
-          <select value={alignmentStemId} onChange={event => setAlignmentStemId(event.target.value)} disabled={!stems.length}>
-            {stems.filter(stem => stem.path).map(stem => <option key={stem.id} value={stem.id}>{stem.name}{stem.role === 'lead' ? ' · lead vocal' : ''}</option>)}
-          </select>
-        </label>
-        <p className="muted">Aligns the lyrics you supplied to this audio. It does not identify, transcribe, or change lyrics. Best results usually come from a clear vocal track.</p>
-        <p className="muted">Start playback, then tap the next line or word as it is sung. Spacebar also records a timing while this editor is active.</p>
-      </section>
-
-      <section className="panel preview-panel">
-        <div className="row spaced">
-          <div><div className="section-title">Singer Preview</div><h2>{title || 'Untitled Song'}</h2></div>
-          <button disabled={Boolean(cdgPlayer)} onClick={() => void chooseBackground()}>Choose Background</button>
-        </div>
-        <div className="preview-stage" aria-label="Karaoke lyrics preview">
-          {cdgPlayer ? <CdgPreview player={cdgPlayer} seconds={position} playing={playing} livePosition={livePosition} /> : <>
-          {background?.url && <img src={background.url} alt="Selected karaoke background" />}
-            <div className="preview-brand">The Proper Volume Karaoke Studio</div>
-            <canvas ref={canvas} />
-            {!lines.some(line => position >= line.startSeconds && position < line.endSeconds) && <div className="preview-empty">Timed lyrics preview here</div>}
-          </>}
-        </div>
-        <div className="preview-timeline">
-          {waveform && <WaveformTimeline overview={waveform} duration={previewDuration} position={position} lines={lines} disabled={busy || timing} seek={seek} moveCue={moveCue} />}
-          <div className="row"><span>{seconds(position)}</span><input aria-label="Playback position" className="grow" type="range" min={0} max={previewDuration || 1} step="0.05" value={Math.min(position, previewDuration || 1)} onChange={event => seek(Number(event.target.value))} /><span>{seconds(previewDuration)}</span></div>
-          <div className="row spaced">
-            <div className="toolbar"><button onClick={() => seek(0)}>⏮ Start</button><button className="primary" onClick={() => void togglePlay()} disabled={!stems.length}>{playing ? 'Ⅱ Pause' : '▶ Play'}</button>
-              <label className="row muted">Mix volume <input type="range" min="0" max="1" step="0.01" value={volume} onChange={event => setMasterVolume(Number(event.target.value))} /></label>
-            </div>
-            <span className="muted">{stems.length} stems · {lines.length} cues</span>
           </div>
-        </div>
-      </section>
+          {lines.length > 0 ? <div className="cue-sheet">
+            <div className="cue-columns muted" aria-hidden="true"><span>Cue</span><span>Lyrics</span><span>Start / End</span></div>
+            {lines.map((line, index) => <article className={'cue-block' + ((timing && captureMode === 'line' ? index === nextLine : index === activeCue) ? ' active' : '')} key={line.id}>
+              <button type="button" className="cue-number" onClick={() => seek(line.startSeconds)} aria-label={'Seek to cue ' + (index + 1)}>
+                {String(index + 1).padStart(2, '0')}
+              </button>
+              <input className="cue-text" aria-label={'Lyric line ' + (index + 1)} value={line.text} onChange={event => updateLine(line.id, { text: event.target.value })} />
+              <div className="cue-times">
+                <input aria-label={'Line ' + (index + 1) + ' start'} type="number" min="0" step="0.01" value={line.startSeconds} onChange={event => updateLine(line.id, { startSeconds: Number(event.target.value) })} />
+                <input aria-label={'Line ' + (index + 1) + ' end'} type="number" min="0" step="0.01" value={line.endSeconds} onChange={event => updateLine(line.id, { endSeconds: Number(event.target.value) })} />
+              </div>
+              {line.words.length > 0 && <details className="word-cues">
+                <summary>Word timings · {line.words.length}</summary>
+                {line.words.map((word, wordIndex) => <div className={'word-cue' + (timing && captureMode === 'word' && wordOffsets[index] + wordIndex === nextWord ? ' active' : '')} key={wordIndex}>
+                  <span className="word-label" title={word.text}>{word.text.trim() || ' '}</span>
+                  <input aria-label={'Line ' + (index + 1) + ' word ' + (wordIndex + 1) + ' start'} type="number" min="0" step="0.01" value={word.startSeconds} onChange={event => updateWord(line.id, wordIndex, 'startSeconds', Number(event.target.value))} />
+                  <input aria-label={'Line ' + (index + 1) + ' word ' + (wordIndex + 1) + ' end'} type="number" min="0" step="0.01" value={word.endSeconds} onChange={event => updateWord(line.id, wordIndex, 'endSeconds', Number(event.target.value))} />
+                </div>)}
+              </details>}
+            </article>)}
+          </div> : <p className="empty-row">Import lyrics or build cues from text.</p>}
+        </>}
 
-      <section className="panel">
-        <div className="section-title">Cue Sheet</div><h2>Manual timing</h2>
-        <p className="muted">Adjust cue text and start/end points directly, or tap them during playback.</p>
-        <div className="lyrics-list">
-          {lines.map((line, index) => <div className={'lyric-row ' + (timing && captureMode === 'line' && index === nextLine ? 'active' : '')} key={line.id}>
-            <span className="time">{seconds(line.startSeconds)}</span>
-            <input aria-label={'Lyric line ' + (index + 1)} value={line.text} onChange={event => updateLine(line.id, { text: event.target.value })} />
-          </div>)}
-          {!lines.length && <p className="muted">Import lyrics or paste them in the left panel.</p>}
-        </div>
-        {lines.length > 0 && <div className="stack">
-          {lines.map((line, index) => <div className="cue-block" key={line.id + '-times'}>
-            <div className="row">
-              <span className="time">{String(index + 1).padStart(2, '0')}</span>
-              <input aria-label={'Line ' + (index + 1) + ' start'} type="number" min="0" step="0.01" value={line.startSeconds} onChange={event => updateLine(line.id, { startSeconds: Number(event.target.value) })} />
-              <input aria-label={'Line ' + (index + 1) + ' end'} type="number" min="0" step="0.01" value={line.endSeconds} onChange={event => updateLine(line.id, { endSeconds: Number(event.target.value) })} />
+        {workspace === 'export' && <>
+          <div className="page-heading"><div><div className="eyebrow">Project Output</div><h2>Export</h2></div></div>
+          <div className="stack">
+            <button type="button" className="export-action primary" disabled={busy || !stems.length} onClick={() => void exportVideo()}>
+              <StudioIcon name="display" /><span><strong>Karaoke Video</strong><small>MP4 with mixed audio and lyrics</small></span>
+            </button>
+            <button type="button" className="export-action" disabled={busy || !stems.length} onClick={() => void exportKit()}>
+              <StudioIcon name="folder" /><span><strong>TPV Kit</strong><small>Portable project with stems and lyric cues</small></span>
+            </button>
+          </div>
+          <div className="inspector-section">
+            <h3>Lyric Files</h3>
+            <div className="toolbar">
+              <button type="button" disabled={!lines.length || busy} onClick={() => void exportLyrics('json')}>JSON</button>
+              <button type="button" disabled={!lines.length || busy} onClick={() => void exportLyrics('lrc')}>Enhanced LRC</button>
+              <button type="button" disabled={!lines.length || busy} onClick={() => void exportLyrics('srt')}>SRT</button>
             </div>
-            {line.words.length > 0 && <details className="word-cues">
-              <summary>Word timings · {line.words.length}</summary>
-              {line.words.map((word, wordIndex) => <div className={'row word-cue ' + (timing && captureMode === 'word' && wordOffsets[index] + wordIndex === nextWord ? 'active' : '')} key={wordIndex}>
-                <span className="word-label" title={word.text}>{word.text.trim() || ' '}</span>
-                <input aria-label={'Line ' + (index + 1) + ' word ' + (wordIndex + 1) + ' start'} type="number" min="0" step="0.01" value={word.startSeconds} onChange={event => updateWord(line.id, wordIndex, 'startSeconds', Number(event.target.value))} />
-                <input aria-label={'Line ' + (index + 1) + ' word ' + (wordIndex + 1) + ' end'} type="number" min="0" step="0.01" value={word.endSeconds} onChange={event => updateWord(line.id, wordIndex, 'endSeconds', Number(event.target.value))} />
-              </div>)}
-            </details>}
-          </div>)}
+          </div>
+          {(lines.length > 0 || cdgPath) && <div className="inspector-section">
+            <h3>CD+G Graphics</h3>
+            <div className="toolbar">
+              {lines.length > 0 && <button type="button" disabled={busy} onClick={() => void exportCdg()}>Export CD+G</button>}
+              {cdgPath && <button type="button" disabled={busy} onClick={() => void exportCdg(true)}>Export Original CD+G</button>}
+            </div>
+          </div>}
+        </>}
+      </aside>
+
+      <section className="transport" aria-label="Playback and timeline">
+        {waveform && <WaveformTimeline overview={waveform} duration={previewDuration} position={position} lines={lines}
+          disabled={busy || timing} seek={seek} moveCue={moveCue} appearance={appearance.theme + ':' + appearance.accent} />}
+        {timing && <div className="capture-bar row">
+          <span className="status-dot live" aria-hidden="true" />
+          <span className="grow">Capturing {captureMode} timing</span>
+          <button type="button" className="primary" onClick={captureMode === 'word' ? tapWord : tapLine}>
+            {captureMode === 'word' ? 'Tap Word · ' + Math.min(nextWord + 1, wordCount) + '/' + wordCount : 'Tap Line · ' + Math.min(nextLine + 1, lines.length) + '/' + lines.length}
+          </button>
+          <button type="button" onClick={finishTiming}>Finish Timing</button>
         </div>}
-        <div className="section-title" style={{ marginTop: 24 }}>Export</div>
-        <div className="export-card stack">
-          <div className="toolbar"><button onClick={() => void exportLyrics('json')} disabled={!lines.length}>JSON</button><button onClick={() => void exportLyrics('lrc')} disabled={!lines.length}>Enhanced LRC</button><button onClick={() => void exportLyrics('srt')} disabled={!lines.length}>SRT</button></div>
-          <button className="primary" disabled={busy || !stems.length} onClick={() => void exportVideo()}>Render Karaoke Video (.mp4)</button>
-          <button className="accent" disabled={busy || !stems.length} onClick={() => void exportKit()}>Export TPV Kit (.tpvkit)</button>
-          <span className="muted">Video export uses FFmpeg. A TPV kit includes audio stems and lyrics.</span>
-          <div className="toolbar">
-            {lines.length > 0 && <button disabled={busy} onClick={() => void exportCdg()}>Export CD+G</button>}
-            {cdgPath && <button disabled={busy} onClick={() => void exportCdg(true)}>Export Original CD+G</button>}
+        <div className="transport-strip">
+          <div className="transport-track">
+            <div className="eyebrow">Playback</div>
+            <strong title={projectTitle}>{projectTitle}</strong>
+            <span className="muted">{artist || (stems.length ? stems.length + ' audio ' + (stems.length === 1 ? 'stem' : 'stems') : 'No audio loaded')}</span>
+          </div>
+          <div className="scrub row">
+            <span>{seconds(position)}</span>
+            <input aria-label="Playback position" className="grow" type="range" min={0} max={previewDuration || 1} step="0.05" value={Math.min(position, previewDuration || 1)}
+              disabled={!previewDuration} onChange={event => seek(Number(event.target.value))} />
+            <span>{seconds(previewDuration)}</span>
+          </div>
+          <div className="transport-actions">
+            <IconButton icon="previous" label="Jump to Start" disabled={!previewDuration} onClick={() => seek(0)} />
+            <IconButton icon={playing ? 'pause' : 'play'} label={playing ? 'Pause' : 'Play'} hint={(playing ? 'Pause' : 'Play') + ' (Space)'}
+              className="primary play-button" disabled={!stems.some(stem => stem.url)} onClick={() => void togglePlay()} />
+            <label className="transport-volume"><StudioIcon name="volume" />
+              <input aria-label="Mix volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={event => setMasterVolume(Number(event.target.value))} />
+            </label>
           </div>
         </div>
-        <div className="section-title" style={{ marginTop: 24 }}>Project Status</div>
-        <p className="status">{busy ? 'Working…' : status}</p>
-        {error && <p className="error" role="alert">{error}</p>}
+        <div className="transport-status">
+          <span className="status" role="status">{busy ? status || 'Working…' : status}</span>
+          {error && <p className="error" role="alert">{error}</p>}
+          {recoveryError && !recoveryOpen && <span className="error" role="alert">Recovery unavailable: {recoveryError}</span>}
+        </div>
       </section>
     </main>
-    <footer className="footer" inert={recoveryOpen}>
-      <span>Prototype {version}</span>
-      <div className="row">
-        {recoveryError && !recoveryOpen && <span className="error" role="alert">Recovery unavailable: {recoveryError}</span>}
-        <button disabled={busy || timing} onClick={() => void showRecovery()}>Recovery drafts{recoveryEntries.length ? ' (' + recoveryEntries.length + ')' : ''}</button>
-      </div>
-    </footer>
+
+    {appearanceOpen && <div className="settings" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setAppearanceOpen(false); }}>
+      <section className="settings-card appearance-card" role="dialog" aria-modal="true" aria-labelledby="appearance-title" onKeyDown={event => {
+        if (event.key === 'Escape') setAppearanceOpen(false);
+      }}>
+        <div className="row spaced"><h2 id="appearance-title">Appearance</h2><button autoFocus type="button" onClick={() => setAppearanceOpen(false)}>Close</button></div>
+        <div className="appearance-fields">
+          <label className="field-label">Theme<select value={appearance.theme} onChange={event => setAppearance({ ...appearance, theme: event.target.value as Appearance['theme'] })}>
+            <option value="night">Night</option><option value="day">Day</option>
+          </select></label>
+          <label className="field-label">Accent Color<select value={appearance.accent} onChange={event => setAppearance({ ...appearance, accent: event.target.value as Appearance['accent'] })}>
+            <option value="blue">Blue</option><option value="pink">Pink</option><option value="purple">Purple</option>
+          </select></label>
+        </div>
+      </section>
+    </div>}
     {voiceRecorderOpen && <VoiceRecorder title={title} roles={roles} onSaved={addVoiceRecording} onClose={() => setVoiceRecorderOpen(false)} />}
     {recoveryOpen && <div className="settings" role="presentation">
       <section className="settings-card" role="dialog" aria-modal="true" aria-labelledby="recovery-title" onKeyDown={event => {
@@ -710,11 +935,17 @@ export function App() {
       </section>
     </div>}
     {settingsOpen && <div className="settings" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
-      <section className="settings-card" role="dialog" aria-modal="true" aria-labelledby="preferences-title">
-        <div className="row spaced"><h2 id="preferences-title">Studio Preferences</h2><button onClick={() => setSettingsOpen(false)}>Close</button></div>
-        <p className="muted">Choose the local tools used to render video, separate stems, and align supplied lyrics.</p>
+      <section className="settings-card" role="dialog" aria-modal="true" aria-labelledby="preferences-title" onKeyDown={event => {
+        if (event.key === 'Escape') setSettingsOpen(false);
+      }}>
+        <div className="row spaced"><h2 id="preferences-title">Studio Preferences</h2><button autoFocus onClick={() => setSettingsOpen(false)}>Close</button></div>
         <div className="stack">
+          <div className="settings-group">
+          <h3>Video Rendering</h3>
           <label className="field-label">FFmpeg executable<input value={settings.ffmpegPath} onChange={event => setSettings({ ...settings, ffmpegPath: event.target.value })} /></label>
+          </div>
+          <div className="settings-group">
+          <h3>Stem Separation</h3>
           <label className="field-label">Stem separator
             <select value={settings.separatorAdapter} onChange={event => {
               const adapter = event.target.value as SeparatorAdapter;
@@ -727,10 +958,12 @@ export function App() {
           </label>
           <label className="field-label">Stem separation executable<input value={settings.separatorExecutable} onChange={event => setSettings({ ...settings, separatorExecutable: event.target.value })} /></label>
           <label className="field-label">Stem separation model<input value={settings.separatorModel} onChange={event => setSettings({ ...settings, separatorModel: event.target.value })} /></label>
-          <label className="field-label">Lyric alignment Python executable<input value={settings.lyricAlignerExecutable} onChange={event => setSettings({ ...settings, lyricAlignerExecutable: event.target.value })} /><span className="muted">Use Python 3.10–3.13; a full path is supported.</span></label>
+          </div>
+          <div className="settings-group">
+          <h3>Lyric Synchronization</h3>
+          <label className="field-label">Lyric alignment Python executable<input value={settings.lyricAlignerExecutable} onChange={event => setSettings({ ...settings, lyricAlignerExecutable: event.target.value })} /><span className="muted">Use the path to your WhisperX Python 3.10–3.13 environment.</span></label>
           <label className="field-label">Lyric language code (for example, en)<input value={settings.alignmentLanguage} onChange={event => setSettings({ ...settings, alignmentLanguage: event.target.value })} /></label>
-          <p className="muted">Install the selected separator locally. The first separation can download model weights.</p>
-          <p className="muted">AI lyric synchronization uses local WhisperX forced alignment. Install in the selected Python 3.10–3.13 environment with <code>python -m pip install whisperx</code>; the first run downloads its language model. Audio and lyric text stay on this computer.</p>
+          </div>
         </div>
         <div className="row spaced"><div className="toolbar"><a href="https://github.com/nomadkaraoke/python-audio-separator" target="_blank" rel="noreferrer">Audio Separator setup</a><a href="https://github.com/m-bain/whisperX" target="_blank" rel="noreferrer">WhisperX setup</a></div><button className="primary" onClick={() => void saveSettings()}>Save Preferences</button></div>
       </section>
