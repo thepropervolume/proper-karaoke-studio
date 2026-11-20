@@ -47,6 +47,12 @@ function configurePermissions(session) {
 }
 
 function settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
+function brandIcon() {
+  const root = app.isPackaged
+    ? path.join(process.resourcesPath, 'branding')
+    : path.join(__dirname, '..', 'assets', 'branding');
+  return path.join(root, process.platform === 'win32' ? 'app.ico' : 'app.png');
+}
 async function openProject(file) {
   const project = await loadProject(file);
   return { file, project, revision: projectRevision(project) };
@@ -56,7 +62,7 @@ function createWindow() {
   recovery = createRecoveryStore(recoveryDirectory);
   mainWindow = new BrowserWindow({
     width: 1440, height: 940, minWidth: 1050, minHeight: 680,
-    title: 'The Proper Volume Karaoke Studio', backgroundColor: '#171226',
+    title: 'The Proper Volume Karaoke Studio', backgroundColor: '#090e18', icon: brandIcon(),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   const window = mainWindow;
@@ -83,6 +89,8 @@ async function chooseSave(defaultPath, name, extension) {
   return result.canceled ? null : result.filePath;
 }
 app.whenReady().then(() => {
+  if (process.platform === 'win32') app.setAppUserModelId('com.thepropervolume.karaokestudio');
+  if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(brandIcon());
   protocol.handle('studio-media', request => {
     const filePath = media.get(new URL(request.url).hostname);
     if (!filePath) return new Response('Not found', { status: 404 });

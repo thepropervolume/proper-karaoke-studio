@@ -40,24 +40,39 @@
       {
         "from": "dist-electron/cli.cjs",
         "to": "studio-cli.cjs"
+      },
+      {
+        "from": "assets/branding",
+        "to": "branding",
+        "filter": ["app.ico", "app.png"]
       }
     ],
     "directories": {
       "output": "release"
     },
     "win": {
+      "icon": "assets/branding/app.ico",
       "target": [
         "nsis",
         "zip"
       ]
     },
+    "nsis": {
+      "installerIcon": "assets/branding/app.ico",
+      "uninstallerIcon": "assets/branding/app.ico",
+      "installerHeaderIcon": "assets/branding/app.ico"
+    },
     "linux": {
+      "icon": "assets/branding/linux",
+      "category": "AudioVideo",
       "target": [
         "AppImage",
         "deb"
       ]
     },
     "mac": {
+      "icon": "assets/branding/app.icns",
+      "category": "public.app-category.music",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Studio records voice stems when you start a microphone take."
       },
