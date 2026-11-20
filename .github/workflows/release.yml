@@ -56,9 +56,9 @@ jobs:
       - name: Package native application
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm run package:${{ matrix.npm }} -- --${{ matrix.arch }} --publish never -c.directories.output=release/${{ matrix.platform }}
+        run: npm run package:${{ matrix.npm }} -- --${{ matrix.arch }} --publish never
       - name: Name and validate installer assets
-        run: node scripts/upload-studio-release.mjs prepare ${{ matrix.platform }}
+        run: node scripts/upload-studio-release.mjs prepare ${{ matrix.platform }} release
       - name: Temporarily stage verified packages on the release server
         if: github.ref_type == 'tag' || inputs.publish
         env:
