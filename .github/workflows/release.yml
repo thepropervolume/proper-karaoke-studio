@@ -57,6 +57,10 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run package:${{ matrix.npm }} -- --${{ matrix.arch }} --publish never
+      - name: Test Windows CLI installation and PATH restoration
+        if: matrix.npm == 'win'
+        shell: pwsh
+        run: ./scripts/windows/test-installer.ps1
       - name: Name and validate installer assets
         run: node scripts/upload-studio-release.mjs prepare ${{ matrix.platform }} release
       - name: Temporarily stage verified packages on the release server

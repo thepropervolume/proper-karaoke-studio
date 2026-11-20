@@ -11,6 +11,7 @@
   "description": "The Proper Volume Karaoke Studio — create karaoke videos and TPV kits from audio stems and timed lyrics.",
   "main": "dist-electron/main.cjs",
   "bin": {
+    "tpv-karaoke-studio": "dist-electron/cli.cjs",
     "tpv-studio": "dist-electron/cli.cjs"
   },
   "scripts": {
@@ -19,7 +20,7 @@
     "cli": "node dist-electron/cli.cjs",
     "start": "electron .",
     "test": "tsx --test tests/*.test.ts",
-    "package:win": "npm run build && electron-builder --win nsis zip",
+    "package:win": "npm run build && node scripts/windows/build-cli.mjs && electron-builder --win nsis zip",
     "package:linux": "npm run build && electron-builder --linux AppImage deb",
     "package:mac": "npm run build && electron-builder --mac dmg zip"
   },
@@ -42,6 +43,10 @@
         "to": "studio-cli.cjs"
       },
       {
+        "from": "public/lyric-fonts",
+        "to": "lyric-fonts"
+      },
+      {
         "from": "assets/branding",
         "to": "branding",
         "filter": [
@@ -55,12 +60,18 @@
     },
     "win": {
       "icon": "assets/branding/app.ico",
+      "extraFiles": [
+        { "from": "dist-electron/windows-cli/tpv-karaoke-studio.exe", "to": "cli/tpv-karaoke-studio.exe" }
+      ],
       "target": [
         "nsis",
         "zip"
       ]
     },
     "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "include": "scripts/windows/installer.nsh",
       "installerIcon": "assets/branding/app.ico",
       "uninstallerIcon": "assets/branding/app.ico",
       "installerHeaderIcon": "assets/branding/app.ico"
@@ -72,6 +83,9 @@
         "AppImage",
         "deb"
       ]
+    },
+    "deb": {
+      "fpm": ["scripts/linux/tpv-karaoke-studio=/usr/bin/tpv-karaoke-studio"]
     },
     "mac": {
       "icon": "assets/branding/app.icns",
