@@ -7,6 +7,8 @@ import { pipeline } from 'node:stream/promises';
 import test from 'node:test';
 import yazl from 'yazl';
 import { importKit } from '../src/main/kit-import.cjs';
+import { exportKit } from '../src/main/studio-operations.cjs';
+import { toPortableKitProject, type StudioProject } from '../src/domain/project';
 
 const original = {
   schema: 'com.thepropervolume.karaoke-studio',
@@ -26,6 +28,21 @@ async function makeKit(archive: string, manifest: unknown, entries: Record<strin
   zip.end();
   await pipeline(zip.outputStream, createWriteStream(archive));
 }
+
+test('round-trips a non-looping MP4 backdrop through a portable kit', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'tpv-kit-backdrop-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const backdrop = join(folder, 'A custom backdrop.MP4');
+  const archive = join(folder, 'backdrop.tpvkit');
+  await writeFile(backdrop, 'Backdrop bytes');
+  const project = { ...original, stems: [], importedCdg: null, backgroundLoop: false, backgroundPath: backdrop } as StudioProject;
+  const portable = toPortableKitProject(project);
+  assert.equal(portable.backgroundPath, 'background/backdrop.mp4');
+  await exportKit({ manifest: JSON.stringify(portable), lyrics: {}, stems: [], backgroundPath: backdrop }, archive);
+  const result = await importKit(archive, join(folder, 'reopened.tpv.json'));
+  assert.equal(result.project.backgroundLoop, false);
+  assert.equal(await readFile(result.project.backgroundPath, 'utf8'), 'Backdrop bytes');
+});
 
 test('reopens a kit into a new project with usable local media and unchanged cue timing', async t => {
   const folder = await mkdtemp(join(tmpdir(), 'tpv-kit-import-'));

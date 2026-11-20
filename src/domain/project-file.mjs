@@ -97,6 +97,7 @@ export function validateProject(input, projectPath) {
     lyrics: distinctIds(lyrics, 'Lyric lines'),
     importedCdg: value.importedCdg == null ? null : mediaPath(value.importedCdg, 'CD+G source'),
     backgroundPath: value.backgroundPath == null ? null : mediaPath(value.backgroundPath, 'Backdrop'),
+    backgroundLoop: value.backgroundLoop !== false,
     lyricStyle: normalizeLyricStyle(value.lyricStyle),
   };
 }

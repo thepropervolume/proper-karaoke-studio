@@ -15,7 +15,9 @@ From a source checkout with Node.js 24 or newer, run `npm run build` once, then 
     tpv-karaoke-studio audio process --adapter demucs --model htdemucs --model-options "two-stems=vocals,shifts=0" --audio "Perfect.wav" --output "./stems"
     tpv-karaoke-studio lyrics align --audio "Perfect.wav" --lyrics "Perfect.txt" --project "Perfect.tpv.json"
 
-Formatting preserves lyric words and stanza breaks while wrapping lines. Set `--max-length` to change the default 22-character target. Use the same input and output filename for an in-place rewrite. Audio processing creates a unique output subfolder. Use `audio models` to see available models and supported options for the chosen separator.
+Formatting preserves lyric words and stanza breaks while wrapping lines. The defaults are 10 minimum, 19 target, and 26 maximum characters per line. Change them with `--min-length`, `--target-length`, and `--max-length`. The formatter keeps an indivisible word intact even when it exceeds the maximum. It reads TXT, LRC, Enhanced LRC, SRT, Studio lyric JSON, and JSON lyric search results. Use `--candidate 2` to pick the second usable version from a search result with multiple versions. Timed inputs produce a separate plain-text file so the original timing stays available. Plain-text files support using the same input and output filename.
+
+Audio processing creates a unique output subfolder. Use `audio models` to see available models and supported options for the chosen separator.
 
 With `--lyrics`, alignment can create the named project after it succeeds. For a timed lyric file, use `--output timed.lrc`, `timed.srt`, or `timed.json`. Omit both destinations for timed JSON on stdout. With an existing project, alignment updates the cue timings and checks for concurrent edits.
 
@@ -28,6 +30,7 @@ The project references the original media files. Use a TPV kit to package the st
     tpv-karaoke-studio project init --title "Song Title" --artist "Artist Name"
     tpv-karaoke-studio stems add "Original Song.mp3" --role lead
     tpv-karaoke-studio project backdrop "Cover.png"
+    tpv-karaoke-studio project backdrop "Stage Loop.mp4" --no-loop
     tpv-karaoke-studio lyrics import "Lyrics.txt"
     tpv-karaoke-studio lyrics align
     tpv-karaoke-studio lyrics line 1 --start 00:05.250 --end 9
@@ -62,8 +65,12 @@ Use `--language en` to select a language for one run. The first alignment in eac
     tpv-karaoke-studio stems models --adapter audio-separator
     tpv-karaoke-studio stems models --adapter dango
     tpv-karaoke-studio stems separate "Original Song.wav" --adapter dango --output-dir "./stems" --approve-cloud
+    tpv-karaoke-studio audio models --adapter mvsep
+    tpv-karaoke-studio audio process --adapter mvsep --model 49 --audio "Original Song.wav" --output "./stems" --approve-cloud
+    tpv-karaoke-studio audio models --adapter gaudio
+    tpv-karaoke-studio audio process --adapter gaudio --audio "Original Song.wav" --output "./stems" --approve-cloud
 
-For Dango, supply `DANGO_APP_KEY` and `DANGO_APP_SECRET` through the environment. `--approve-cloud` authorizes uploading the named file and using Dango credits for that job. The desktop editor manages its credentials separately.
+Supply `DANGO_APP_KEY` and `DANGO_APP_SECRET` for Dango, `MVSEP_API_KEY` for MVSEP, or `GAUDIO_API_KEY` for Gaudio through the environment. `--approve-cloud` authorizes uploading the named file and any provider charges for that job. The desktop editor manages its credentials separately.
 
 ## Download lyrics with ktools
 

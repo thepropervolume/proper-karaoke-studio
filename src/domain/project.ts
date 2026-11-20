@@ -11,7 +11,7 @@ export type StudioStem = {
 export type StudioProject = {
   schema: 'com.thepropervolume.karaoke-studio'; version: 1; title: string; artist: string;
   durationSeconds: number; stems: Omit<StudioStem, 'file' | 'url'>[]; lyrics: LyricLine[]; importedCdg?: string | null;
-  backgroundPath?: string | null; lyricStyle?: LyricStyle;
+  backgroundPath?: string | null; backgroundLoop?: boolean; lyricStyle?: LyricStyle;
 };
 
 export function newLyricLines(text: string, duration: number): LyricLine[] {
@@ -110,7 +110,7 @@ function archiveName(sourcePath: string): string {
 // Strip host-local paths from the portable manifest and align each path with
 // the corresponding entry name that the streaming ZIP writer creates.
 export function toPortableKitProject(project: StudioProject): StudioProject {
-  const { backgroundPath: _localBackground, ...portable } = project;
+  const { backgroundPath, ...portable } = project;
   return {
     ...portable,
     stems: project.stems.map((stem, index) => ({
@@ -118,7 +118,13 @@ export function toPortableKitProject(project: StudioProject): StudioProject {
       path: 'stems/' + String(index + 1).padStart(2, '0') + '-' + archiveName(stem.path),
     })),
     importedCdg: project.importedCdg ? 'source/' + archiveName(project.importedCdg) : null,
+    backgroundPath: backgroundPath ? portableBackgroundPath(backgroundPath) : null,
   };
+}
+
+export function portableBackgroundPath(source: string): string {
+  const extension = /\.[^.\\/]+$/.exec(source)?.[0].toLowerCase() ?? '';
+  return 'background/backdrop' + extension;
 }
 
 // Adapt editor cues to the Booth canvas renderer so preview and playback share

@@ -7,7 +7,7 @@ const { promisify } = require('node:util');
 const { crc32 } = require('node:zlib');
 const yauzl = require('yauzl');
 const { saveProject, validateProject } = require('../domain/project-file.mjs');
-const { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, localFile } = require('./studio-operations.cjs');
+const { AUDIO_EXTENSIONS, BACKGROUND_EXTENSIONS, localFile } = require('./studio-operations.cjs');
 
 const MIB = 1024 * 1024;
 const entryLimit = 128;
@@ -100,7 +100,7 @@ function buildAssetPlan(entries, data) {
   }
   const stems = data.stems.map((stem, index) => add(stem.path, 'stems', 'stem-' + (index + 1), AUDIO_EXTENSIONS));
   const cdg = data.importedCdg == null ? null : add(data.importedCdg, 'source', 'source', cdgExtensions);
-  const background = data.backgroundPath == null ? null : add(data.backgroundPath, 'background', 'background', IMAGE_EXTENSIONS);
+  const background = data.backgroundPath == null ? null : add(data.backgroundPath, 'background', 'background', BACKGROUND_EXTENSIONS);
   return { plan, stems, cdg, background };
 }
 

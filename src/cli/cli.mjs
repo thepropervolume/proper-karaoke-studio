@@ -10,11 +10,14 @@ import alignmentRuntime from '../main/alignment-runtime.cjs';
 import modelOptions from '../main/separation-options.cjs';
 import separatorModels from '../main/separator-models.cjs';
 import dango from '../main/dango-separator.cjs';
+import cloud from '../main/cloud-separators.cjs';
+import modelLibrary from '../main/model-library.cjs';
 import studioOptions from '../domain/studio-options.json';
 import { toAss, toLrc, toLyricsJson, toSrt } from '../domain/lyrics-formats.ts';
 import { toPortableKitProject } from '../domain/project.ts';
 import { addProjectStems, loadProject, projectCommand, projectFile, projectRevision, saveProject } from './project-commands.mjs';
 import { alignLyricsFromFiles, formatLyricsFile } from './standalone-lyrics.mjs';
+import { normalizeLyricFormatOptions, validateLyricFormatOptions } from '../domain/lyric-format.ts';
 import { version } from '../../package.json';
 
 const commands = {
@@ -23,22 +26,22 @@ const commands = {
   'project open': ' [--app <desktop-executable>]',
   'project import-kit': ' <kit.tpvkit>',
   'project metadata': ' [--title <title>] [--artist <artist>] [--duration <seconds>]',
-  'project backdrop': ' <image> | --clear',
+  'project backdrop': ' <image-or-video> [--no-loop] | --clear',
   'stems add': ' <audio...> [--role <role>] [--voice <name>] [--name <name>] [--volume <gain>] [--duration <seconds>] [--ffmpeg <exe>]',
   'stems list': '',
   'stems edit': ' <stem> [--path <audio>] [--role <role>] [--voice <name>] [--name <name>] [--volume <gain>] [--duration <seconds>] [--ffmpeg <exe>]',
   'stems remove': ' <stem...>',
-  'stems separate': ' <audio> --output-dir <directory> [--add] [--adapter <audio-separator|demucs|dango>] [--executable <exe>] [--model <model>] [--model-options <key=value,...>] [--ffmpeg <exe>] [--approve-cloud]',
-  'stems models': ' [--adapter <audio-separator|demucs|dango>] [--executable <exe>]',
-  'audio models': ' [--adapter <audio-separator|demucs|dango>] [--executable <exe>]',
-  'audio process': ' --audio <file> --output <directory> [--adapter <audio-separator|demucs|dango>] [--model <model>] [--model-options <key=value,...>] [--executable <exe>] [--approve-cloud]',
+  'stems separate': ' <audio> --output-dir <directory> [--add] [--adapter <audio-separator|demucs|dango|mvsep|gaudio>] [--executable <exe>] [--model <model>] [--model-options <key=value,...>] [--ffmpeg <exe>] [--approve-cloud]',
+  'stems models': ' [--adapter <audio-separator|demucs|dango|mvsep|gaudio>] [--executable <exe>]',
+  'audio models': ' [--adapter <audio-separator|demucs|dango|mvsep|gaudio>] [--executable <exe>]',
+  'audio process': ' --audio <file> --output <directory> [--adapter <audio-separator|demucs|dango|mvsep|gaudio>] [--model <model>] [--model-options <key=value,...>] [--executable <exe>] [--approve-cloud]',
   'lyrics import': ' <file> [--mapping <mapping.json>]',
   'lyrics show': ' [<line>]',
   'lyrics set': ' <text-file> | --text <lyrics>',
   'lyrics line': ' <line> [--text <text>] [--start <seconds>] [--end <seconds>]',
   'lyrics word': ' <line> <word> [--start <seconds>] [--end <seconds>]',
   'lyrics download': ' [--artist <artist>] [--title <title>] [--album <album>] [--duration <seconds>] [--source <source>] [--output-dir <directory>] [--ktools-home <directory>] [--python <exe>] [--input-lyrics <file>] [--no-format] [--force] [--import] [--use <plain|formatted|synced>]',
-  'lyrics format': ' --lyrics <file> --output <file> [--max-length <characters>] [--force]',
+  'lyrics format': ' --lyrics <file> --output <file> [--min-length <characters>] [--target-length <characters>] [--max-length <characters>] [--candidate <number>] [--force]',
   'lyrics align': ' [--audio <file>] [--lyrics <file>] [--output <file.lrc|file.srt|file.json>] [--language <code>] [--python <exe>] [--force]',
   'lyrics setup': ' [--status]',
   'lyrics languages': '',
@@ -49,7 +52,7 @@ const commands = {
   'settings set': ' <key> <value>',
 };
 
-const booleanOptions = new Set(['help', 'json', 'force', 'add', 'import', 'no-format', 'clear', 'original', 'status', 'approve-cloud']);
+const booleanOptions = new Set(['help', 'json', 'force', 'add', 'import', 'no-format', 'no-loop', 'clear', 'original', 'status', 'approve-cloud']);
 const settingsKeys = Object.keys(operations.defaultSettings);
 const commandName = 'tpv-karaoke-studio';
 const help = 'The Proper Volume Karaoke Studio ' + version + '\n\n' +
@@ -144,6 +147,7 @@ async function exportProject(action, args, settings) {
       duration: project.durationSeconds,
       stems: project.stems,
       backgroundPath: project.backgroundPath,
+      backgroundLoop: project.backgroundLoop,
       backgroundColor: project.lyricStyle?.backgroundColor,
       cdgPath: project.lyrics.length ? null : project.importedCdg,
       ffmpegPath: args.options.ffmpeg || settings.ffmpegPath,
@@ -156,6 +160,7 @@ async function exportProject(action, args, settings) {
       lyrics: { 'lyrics.json': json, 'lyrics.enhanced.lrc': lrc, 'lyrics.srt': srt },
       stems: project.stems,
       cdgPath: project.importedCdg,
+      backgroundPath: project.backgroundPath,
     }, destination, overwrite);
   }
   return { output: destination };
@@ -248,7 +253,7 @@ function alignmentLanguages(args) {
 
 function separationOptions(args, settings) {
   const adapter = args.options.adapter ?? settings.separatorAdapter;
-  if (!Object.hasOwn(operations.separationDefaults, adapter)) usage('Choose audio-separator, demucs, or dango for --adapter.');
+  if (!Object.hasOwn(operations.separationDefaults, adapter)) usage('Choose a separator: ' + Object.keys(operations.separationDefaults).join(', ') + '.');
   const preferred = adapter === settings.separatorAdapter
     ? { executable: settings.separatorExecutable, model: settings.separatorModel }
     : operations.separationDefaults[adapter];
@@ -263,24 +268,37 @@ async function separate(args, settings, dependencies, standalone = false) {
   positionals(args, standalone ? 0 : 1);
   if (standalone && args.options.project !== undefined) usage('--project does not apply to audio process.');
   const options = separationOptions(args, settings);
-  if (options.adapter === 'dango' && !args.options['approve-cloud']) usage('Dango uploads the selected file and may spend credits. Confirm with --approve-cloud.');
+  const provider = cloud.cloudSeparators[options.adapter];
+  const useDango = options.adapter === 'dango';
+  const serviceName = provider?.name ?? (useDango ? 'Dango' : null);
+  if (serviceName && !args.options['approve-cloud']) usage(serviceName + ' uploads the selected file and may spend credits. Confirm with --approve-cloud.');
   let model;
   try {
     const requested = modelOptions.parseModelOptions(args.options['model-options']);
     model = modelOptions.validatedModelOptions(options.adapter, requested);
   } catch (error) { usage(error.message); }
-  const credentials = options.adapter === 'dango'
-    ? dango.normalizeDangoCredentials({ appKey: process.env.DANGO_APP_KEY, appSecret: process.env.DANGO_APP_SECRET })
-    : null;
+  const credentials = provider
+    ? provider.normalizeKey(process.env[options.adapter === 'mvsep' ? 'MVSEP_API_KEY' : 'GAUDIO_API_KEY'])
+    : useDango ? dango.normalizeDangoCredentials({ appKey: process.env.DANGO_APP_KEY, appSecret: process.env.DANGO_APP_SECRET }) : null;
   const file = projectFile(args);
   const project = args.options.add ? await loadProject(file) : null;
   const directory = path.resolve(requiredOption(args.options, standalone ? 'output' : 'output-dir'));
   const sourcePath = path.resolve(standalone ? requiredOption(args.options, 'audio') : args.positional[0]);
   await operations.localFile(sourcePath, operations.AUDIO_EXTENSIONS);
   await mkdir(directory, { recursive: true });
-  const result = credentials
-    ? await dango.separateWithDango({ credentials, sourcePath, outputDirectory: directory, model: options.model, modelOptions: model })
-    : await operations.separate({ ...options, sourcePath, modelOptions: model }, directory);
+  const cloudJob = { credentials, sourcePath, outputDirectory: directory, model: options.model };
+  let result;
+  if (provider) result = await provider.separate(cloudJob);
+  else if (useDango) result = await dango.separateWithDango({ ...cloudJob, modelOptions: model });
+  else {
+    const root = path.join(path.dirname(path.dirname(settingsFile({}))), 'proper-karaoke-studio', 'models');
+    const library = modelLibrary.createModelLibrary(root);
+    const ensembleModels = options.adapter === 'audio-separator' ? settings.ensembleModels : [];
+    const backingModel = options.adapter === 'audio-separator' ? settings.backingModel : '';
+    const selectedModels = [options.model, ...ensembleModels, ...(backingModel ? [backingModel] : [])];
+    const modelDirectory = await library.prepare(selectedModels, settings.uvrModelsPath, options.adapter);
+    result = await operations.separate({ ...options, sourcePath, modelOptions: model, modelDirectory, ensembleModels, backingModel }, directory);
+  }
   if (project) {
     try {
       const updated = await addProjectStems(project, result.files, { ...dependencies, ffmpegPath: args.options.ffmpeg || settings.ffmpegPath });
@@ -331,8 +349,16 @@ async function dispatch(command, args) {
     const [key, value] = args.positional;
     if (!settingsKeys.includes(key)) usage('Choose a setting: ' + settingsKeys.join(', '));
     const next = { ...settings, [key]: value };
+    if (key === 'lyricFormat') {
+      try { next.lyricFormat = validateLyricFormatOptions(JSON.parse(value)); }
+      catch { usage('Use an ordered lyric format JSON object such as {"minLength":10,"targetLength":19,"maxLength":26}.'); }
+    }
+    if (key === 'ensembleModels') {
+      try { next.ensembleModels = JSON.parse(value); }
+      catch { usage('Use a JSON array of model filenames for ensembleModels.'); }
+    }
     if (key === 'separatorAdapter' && value !== settings.separatorAdapter) {
-      if (!Object.hasOwn(operations.separationDefaults, value)) usage('Choose audio-separator, demucs, or dango.');
+      if (!Object.hasOwn(operations.separationDefaults, value)) usage('Choose a separator: ' + Object.keys(operations.separationDefaults).join(', ') + '.');
       next.separatorExecutable = operations.separationDefaults[value].executable;
       next.separatorModel = operations.separationDefaults[value].model;
     }
@@ -357,10 +383,17 @@ async function dispatch(command, args) {
   if (command === 'lyrics format') {
     positionals(args, 0);
     if (args.options.project !== undefined) usage('--project does not apply to lyrics format.');
+    const defaults = normalizeLyricFormatOptions(settings.lyricFormat);
+    const maxLength = Number(args.options['max-length'] ?? defaults.maxLength);
+    const minLength = Number(args.options['min-length'] ?? Math.min(defaults.minLength, maxLength));
+    const targetLength = Number(args.options['target-length'] ?? Math.max(minLength, Math.min(defaults.targetLength, maxLength)));
+    let formatting;
+    try { formatting = validateLyricFormatOptions({ minLength, targetLength, maxLength }); }
+    catch (error) { usage(error.message); }
     return formatLyricsFile({
       lyricsFile: requiredOption(args.options, 'lyrics'), output: requiredOption(args.options, 'output'),
-      width: args.options['max-length'] === undefined ? undefined : Number(args.options['max-length']),
-      force: args.options.force, preferences,
+      formatting, force: args.options.force, preferences,
+      candidate: args.options.candidate === undefined ? undefined : Number(args.options.candidate),
     });
   }
   if (command === 'lyrics align') return align(args, settings);

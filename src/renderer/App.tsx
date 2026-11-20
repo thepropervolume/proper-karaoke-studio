@@ -3,8 +3,10 @@ import { KaraFunPlayer as KaraokePlayer, type KaraFunPlayerEvent as KaraokePlaye
 import { paintKaraFunLyrics } from '../shared/from-booth/display/karafun-lyrics';
 import { finishTimedWord, newLyricLines, recordTimedWordStart, seedTimedWords, timedWordCount, toPortableKitProject, toRenderTiming, type LyricLine, type StudioProject, type StudioRole, type StudioStem } from '../domain/project';
 import { parseLyricsFile, toAss, toLrc, toLyricsJson, toSrt } from '../domain/lyrics-formats';
+import { formatLyricText, MAXIMUM_LYRIC_TEXT_BYTES, readLyricVersions, type LyricFormatOptions, type LyricVersion } from '../domain/lyric-format';
 import { applyForcedAlignment } from '../domain/forced-alignment';
 import { defaultLyricStyle, lyricFonts, normalizeLyricStyle } from '../domain/lyric-style';
+import { DEFAULT_LYRIC_FORMAT_OPTIONS } from '../domain/lyric-format';
 import { CdgPlayer, cdgByteLimit } from '../domain/cdg';
 import { CdgPreview } from './CdgPreview';
 import { WaveformTimeline } from './WaveformTimeline';
@@ -13,6 +15,8 @@ import { WorkspaceSeparator, defaultInspectorWidth, inspectorMax, minInspectorWi
 import { VoiceRecorder } from './VoiceRecorder';
 import { PreferencesDialog, preferenceError } from './PreferencesDialog';
 import { LyricAppearance } from './LyricAppearance';
+import { BackdropPreview } from './BackdropPreview';
+import { LyricFormatFields } from './LyricFormatFields';
 import { version } from '../../package.json';
 import markDark from '../../assets/branding/icon-dark.svg';
 import markLight from '../../assets/branding/icon-light.svg';
@@ -22,6 +26,18 @@ const allAudible = { instrumental: 1, lead: 1, backing: 1, other: 1 } as const;
 const seconds = (value: number) => Math.floor(value / 60) + ':' + (value % 60).toFixed(1).padStart(4, '0');
 const safeName = (value: string) => value.trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 100) || 'Untitled';
 const basename = (value: string) => value.split(/[\\/]/).at(-1);
+
+function separatedRole(path: string): StudioRole {
+  const name = (basename(path) ?? '').replace(/\.[^.]+$/, '').replace(/[_-]/g, ' ');
+  if (/\b(no vocals|instrumental|accompaniment)\b/i.test(name)) return 'instrumental';
+  if (/\b(backing|background|low vocals)\b/i.test(name)) return 'backing';
+  return /\b(lead|vocals?)\b/i.test(name) ? 'lead' : 'other';
+}
+const normalizedCueText = (value: string) => value.split(/\r\n|\r|\n/).map(line => line.trim()).filter(Boolean).join('\n');
+const versionLabel = (version: LyricVersion, index: number) => [
+  'Version ' + (index + 1), [version.artist, version.track].filter(Boolean).join(' – '), version.album,
+  version.duration ? seconds(version.duration) : '',
+].filter(Boolean).join(' · ');
 
 const workspaces = [
   { id: 'audio', label: 'Audio Stems', icon: 'audio' },
@@ -103,18 +119,23 @@ export function App() {
   const [playing, setPlaying] = useState(false), [volume, setVolume] = useState(0.8);
   const [lyricsDraft, setLyricsDraft] = useState(''), [nextLine, setNextLine] = useState(0), [nextWord, setNextWord] = useState(0), [captureMode, setCaptureMode] = useState<'line' | 'word'>('line'), [timing, setTiming] = useState(false);
   const [draftPending, setDraftPending] = useState(false);
+  const [lyricFormatOverride, setLyricFormatOverride] = useState<LyricFormatOptions | null>(null);
+  const [lyricVersions, setLyricVersions] = useState<{ name: string; items: LyricVersion[] } | null>(null);
+  const lyricFileRequest = useRef(0);
   const [status, setStatus] = useState('Create a project by importing audio stems.');
   const [error, setError] = useState('');
   const [settings, setSettings] = useState<StudioSettings>({
     ffmpegPath: 'ffmpeg', separatorAdapter: 'audio-separator', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx',
-    lyricAlignerExecutable: '', alignmentLanguage: 'en',
+    lyricAlignerExecutable: '', alignmentLanguage: 'en', lyricFormat: DEFAULT_LYRIC_FORMAT_OPTIONS,
+    uvrModelsPath: '', ensembleModels: [], backingModel: '',
   });
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false), [busy, setBusy] = useState(false);
   const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
   const [cdgPath, setCdgPath] = useState<string | null>(null);
   const [decodedCdg, setDecodedCdg] = useState<CdgPlayer | null>(null);
-  const [background, setBackground] = useState<{ url: string; path: string } | null>(null);
+  const [background, setBackground] = useState<{ url: string; path: string; motion: boolean } | null>(null);
+  const [backgroundLoop, setBackgroundLoop] = useState(true);
   const [openedProject, setOpenedProject] = useState<(StudioProjectOrigin & { snapshot: string | null }) | null>(null);
   const [projectTransition, setProjectTransition] = useState(true);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
@@ -226,6 +247,7 @@ export function App() {
   }, [volume]);
 
   const applyProject = useCallback(async ({ project, origin, lyricsDraft: draft }: StudioRecoveryDraft, restored = false) => {
+    lyricFileRequest.current++;
     const unavailable: string[] = [];
     const register = async (path: string) => {
       try { return await window.studio.registerMedia(path); }
@@ -239,9 +261,14 @@ export function App() {
     const media = await Promise.all(project.stems.map(async stem => ({
       ...stem, url: await register(stem.path),
     })));
-    const image = project.backgroundPath
-      ? { path: project.backgroundPath, url: await register(project.backgroundPath) }
-      : null;
+    let backdropError = '';
+    const backdropPath = project.backgroundPath;
+    const image = backdropPath ? await window.studio.registerBackground(backdropPath)
+      .then(media => ({ path: backdropPath, ...media }))
+      .catch(cause => {
+        backdropError = preferenceError(cause);
+        return { path: backdropPath, url: '', motion: false };
+      }) : null;
     const source = project.importedCdg ?? null;
     const graphics = source ? await window.studio.readCdg(source).then(bytes => new CdgPlayer(bytes)).catch(() => {
       unavailable.push(basename(source) ?? source);
@@ -251,6 +278,8 @@ export function App() {
     setTitle(project.title);
     setArtist(project.artist);
     setLines(project.lyrics);
+    setLyricFormatOverride(null);
+    setLyricVersions(null);
     setLyricStyle(normalizeLyricStyle(project.lyricStyle));
     setLyricsDraft(draft ?? project.lyrics.map(line => line.text).join('\n'));
     setDraftPending(draft !== null);
@@ -260,10 +289,12 @@ export function App() {
     setCdgPath(source);
     setDecodedCdg(graphics);
     setBackground(image);
+    setBackgroundLoop(project.backgroundLoop !== false);
     await loadStems(media, project.durationSeconds || undefined);
     setOpenedProject(origin ? { ...origin, snapshot: restored ? null : JSON.stringify(project) } : null);
     setStatus(restored ? 'Recovered unsaved changes.' : 'Opened ' + basename(origin?.file ?? 'Project') + '.');
     if (unavailable.length) setError('Some source files are unavailable: ' + unavailable.join(', ') + '. Restore them to their original locations or replace them in the project.');
+    else if (backdropError) setError('Backdrop preview is unavailable. ' + backdropError);
   }, [loadStems]);
 
   const applyOpenedProject = useCallback(({ file, project, revision }: OpenedStudioProject) =>
@@ -297,12 +328,12 @@ export function App() {
     })();
   }, [applyOpenedProject]);
 
-  const addLocalPaths = useCallback(async (paths: string[]) => {
+  const addLocalPaths = useCallback(async (paths: string[], roles?: Record<string, StudioRole>) => {
     const additions: StudioStem[] = [];
     for (const path of paths) {
       try {
         const url = await window.studio.registerMedia(path), durationSeconds = await mediaDuration(url);
-        additions.push({ id: crypto.randomUUID(), name: path.split(/[\\/]/).at(-1) || 'Audio stem', role: 'other', voice: '', path, url, durationSeconds, volume: 1 });
+        additions.push({ id: crypto.randomUUID(), name: basename(path) || 'Audio stem', role: roles?.[path] ?? 'other', voice: '', path, url, durationSeconds, volume: 1 });
       } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     }
     if (additions.length) await loadStems([...stems, ...additions]);
@@ -383,10 +414,35 @@ export function App() {
   }));
   const setMasterVolume = (value: number) => { setVolume(value); if (generation.current) player.current?.setVolume(generation.current, value); };
 
+  const cueText = normalizedCueText(lines.map(line => line.text).join('\n'));
+  const formatterOptions = lyricFormatOverride ?? settings.lyricFormat;
+  const setLyricText = (text: string) => {
+    setLyricsDraft(text);
+    const normalized = normalizedCueText(text);
+    setDraftPending(Boolean(normalized) && normalized !== cueText);
+  };
+  const formatLyrics = () => {
+    setError('');
+    setDraftOpen(true);
+    try {
+      const input = draftPending || !lines.length || normalizedCueText(lyricsDraft) === cueText ? lyricsDraft : cueText;
+      const formatted = formatLyricText(input, formatterOptions);
+      setLyricText(formatted);
+      setStatus('Formatted ' + normalizedCueText(formatted).split('\n').length + ' lyric lines. Review the draft before building cues.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  };
   const makeLines = () => {
-    setLines(newLyricLines(lyricsDraft, duration || 240)); setNextLine(0); setTiming(false);
+    if (lyricsDraft.trim() === '') return;
+    if (normalizedCueText(lyricsDraft) === cueText) {
+      setDraftPending(false);
+      setDraftOpen(false);
+      setStatus('The draft already matches the cue sheet.');
+      return;
+    }
+    if (lines.length && !window.confirm('Replace the cue sheet with this draft? Existing timings will need to be synced again.')) return;
+    setLines(newLyricLines(lyricsDraft, duration || 240)); setNextLine(0); setNextWord(0); setTiming(false);
     setDraftPending(false);
-    if (lyricsDraft.trim()) setDraftOpen(false);
+    setDraftOpen(false);
     setStatus('Lyrics added. Start playback and tap each line as it is sung.');
   };
   const beginTiming = async () => {
@@ -478,34 +534,60 @@ export function App() {
     window.addEventListener('keydown', handleCaptureKey);
     return () => window.removeEventListener('keydown', handleCaptureKey);
   }, [handleCaptureKey]);
+  const useLyricVersion = (version: LyricVersion, name: string) => {
+    setLyricVersions(null);
+    setLyricText(version.text);
+    setDraftOpen(true);
+    if (version.track) setTitle(current => current || version.track || '');
+    if (version.artist) setArtist(current => current || version.artist || '');
+    setStatus('Loaded a lyric draft from ' + name + '.');
+  };
   const importLyrics = async (file: File) => {
-    if (file.name.toLowerCase().endsWith('.cdg')) {
-      setError('');
+    const request = ++lyricFileRequest.current;
+    const extension = file.name.toLowerCase().split('.').at(-1);
+    setLyricVersions(null);
+    setError('');
+    if (extension === 'cdg') {
       try {
         if (file.size > cdgByteLimit) throw new Error('Choose a CD+G file with no more than one hour of graphics.');
         const path = window.studio.getPathForFile(file);
         if (!path) throw new Error('Choose a local CD+G file.');
         const decoded = new CdgPlayer(new Uint8Array(await file.arrayBuffer()));
+        if (request !== lyricFileRequest.current) return;
         setDecodedCdg(decoded);
         setCdgPath(path);
         setStatus(lines.length ? 'CD+G graphics attached. Editable cues are used for preview.' : 'CD+G graphics ready. Import the matching audio to play them together.');
-      } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+      } catch (cause) { if (request === lyricFileRequest.current) setError(cause instanceof Error ? cause.message : String(cause)); }
       return;
     }
     try {
-      if (file.name.toLowerCase().endsWith('.txt')) {
-        const contents = (await file.text()).replace(/^\uFEFF/, '');
+      if (!file.size || file.size > MAXIMUM_LYRIC_TEXT_BYTES) throw new Error('Choose a nonempty lyric file of up to 4 MB.');
+      const contents = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
+      if (request !== lyricFileRequest.current) return;
+      if (extension === 'json') {
+        const versions = readLyricVersions(contents);
+        if (versions) {
+          if (versions.length === 1) useLyricVersion(versions[0], file.name);
+          else {
+            setLyricVersions({ name: file.name, items: versions });
+            setDraftOpen(true);
+            setStatus('Choose a lyric version from ' + file.name + '.');
+          }
+          return;
+        }
+      }
+      if (extension === 'txt') {
         const cues = newLyricLines(contents, duration || 240);
         if (!cues.length) throw new Error('The text file contains no lyrics.');
         setLines(cues);
-        setLyricsDraft(cues.map(line => line.text).join('\n'));
+        setLyricsDraft(contents.replace(/\r\n?/g, '\n'));
         setDraftPending(false);
-        setDraftOpen(false);
+        setDraftOpen(true);
         setNextLine(0); setNextWord(0); setTiming(false);
         setStatus('Imported ' + cues.length + ' lines from ' + file.name + '.');
         return;
       }
-      const imported = parseLyricsFile(file.name, await file.text());
+      const imported = parseLyricsFile(file.name, contents);
       setLines(imported.lines);
       if (imported.title) setTitle(imported.title);
       if (imported.artist) setArtist(imported.artist);
@@ -513,7 +595,7 @@ export function App() {
       setDraftPending(false);
       setDraftOpen(false);
       setStatus('Imported ' + imported.lines.length + ' lyric cues from ' + file.name + '.');
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    } catch (cause) { if (request === lyricFileRequest.current) setError(cause instanceof Error ? cause.message : String(cause)); }
   };
   const exportLyrics = async (format: 'json' | 'lrc' | 'srt') => {
     setBusy(true); setError('');
@@ -528,11 +610,12 @@ export function App() {
     const source = stems.find(stem => stem.path)?.path;
     if (!source) { setError('Import a local audio file before running stem separation.'); return; }
     setBusy(true); setError('');
-    setStatus(settings.separatorAdapter === 'dango' ? 'Preparing Dango stem separation…' : 'Separating audio with the selected local model…');
+    const cloud = !['audio-separator', 'demucs'].includes(settings.separatorAdapter);
+    setStatus(cloud ? 'Preparing cloud stem separation…' : 'Separating audio with the selected local models…');
     try {
-      const result = await window.studio.separate({ sourcePath: source, adapter: settings.separatorAdapter, executable: settings.separatorExecutable, model: settings.separatorModel });
+      const result = await window.studio.separate({ sourcePath: source });
       if (!result.files.length) { setStatus('Stem separation canceled.'); return; }
-      await addLocalPaths(result.files);
+      await addLocalPaths(result.files, result.roles ?? Object.fromEntries(result.files.map(file => [file, separatedRole(file)])));
       setStatus('Separated audio saved to ' + result.outputDirectory + '.');
     } catch (cause) { setError(preferenceError(cause)); setStatus('Stem separation did not finish.'); }
     finally { setBusy(false); }
@@ -540,16 +623,19 @@ export function App() {
   const chooseBackground = async () => {
     const path = await window.studio.chooseImageFile();
     if (!path) return;
+    setBusy(true); setError('');
     try {
-      const url = await window.studio.registerMedia(path);
-      setBackground(current => { if (current?.url.startsWith('blob:')) URL.revokeObjectURL(current.url); return { url, path }; });
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+      const media = await window.studio.registerBackground(path);
+      setBackground({ ...media, path });
+    } catch (cause) { setError(preferenceError(cause)); }
+    finally { setBusy(false); }
   };
 
   const currentProject = useMemo<StudioProject>(() => ({
     schema: 'com.thepropervolume.karaoke-studio', version: 1, title, artist, durationSeconds: duration,
-    stems: stems.map(({ file: _file, url: _url, ...stem }) => stem), lyrics: lines, importedCdg: cdgPath, backgroundPath: background?.path ?? null, lyricStyle,
-  }), [title, artist, duration, stems, lines, cdgPath, background?.path, lyricStyle]);
+    stems: stems.map(({ file: _file, url: _url, ...stem }) => stem), lyrics: lines, importedCdg: cdgPath, backgroundPath: background?.path ?? null,
+    backgroundLoop, lyricStyle,
+  }), [title, artist, duration, stems, lines, cdgPath, background?.path, backgroundLoop, lyricStyle]);
   const projectChanged = useMemo(() => openedProject ? openedProject.snapshot !== JSON.stringify(currentProject)
     : Boolean(stems.length || lines.length || background || cdgPath || title || artist || JSON.stringify(lyricStyle) !== JSON.stringify(defaultLyricStyle)),
   [openedProject, currentProject, stems.length, lines.length, background, cdgPath, title, artist, lyricStyle]);
@@ -628,7 +714,7 @@ export function App() {
         name: safeName(title), manifest: JSON.stringify(kitProject, null, 2),
         lyrics: { 'lyrics.json': toLyricsJson(title, artist, duration, lines), 'lyrics.enhanced.lrc': toLrc(title, artist, lines), 'lyrics.srt': toSrt(lines) },
         stems: stems.map(stem => ({ path: stem.path, name: stem.name, role: stem.role, voice: stem.voice, volume: stem.volume })),
-        cdgPath,
+        cdgPath, backgroundPath: background?.path,
       });
       if (saved) setStatus('Exported TPV kit: ' + saved.split(/[\\/]/).at(-1) + '.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
@@ -640,7 +726,7 @@ export function App() {
     try {
       const saved = await window.studio.exportVideo({
         name: safeName(title), duration, artist, title, ffmpegPath: settings.ffmpegPath,
-        backgroundPath: background?.path, backgroundColor: lyricStyle.backgroundColor,
+        backgroundPath: background?.path, backgroundLoop, backgroundColor: lyricStyle.backgroundColor,
         cdgPath: lines.length ? null : cdgPath,
         stems: stems.map(stem => ({ path: stem.path, name: stem.name, role: stem.role, voice: stem.voice, volume: stem.volume })),
         ass: toAss(title, artist, duration, lines, 'video', lyricStyle),
@@ -777,7 +863,12 @@ export function App() {
           <div><div className="eyebrow">Project</div><h1 id="preview-title">Singer Preview</h1></div>
           <div className="toolbar">
             <IconButton icon="palette" label="Lyric Appearance" disabled={!canStyle || busy} onClick={() => setLyricAppearanceOpen(true)} />
-            <IconButton icon="image" label="Choose Background" disabled={!canStyle || busy} onClick={() => void chooseBackground()} />
+            {background?.motion && <label className="row backdrop-loop" data-tip="Repeat the muted backdrop for the length of the song.">
+              <input type="checkbox" checked={backgroundLoop} onChange={event => setBackgroundLoop(event.target.checked)} /> Loop
+            </label>}
+            {background && <button type="button" className="quiet" disabled={busy} onClick={() => { setBackground(null); setBackgroundLoop(true); }}
+              data-tip="Use the project’s background color.">Remove Background</button>}
+            <IconButton icon="image" label="Choose Background" hint="Choose a background image, GIF, or muted MP4" disabled={!canStyle || busy} onClick={() => void chooseBackground()} />
           </div>
         </div>
         <div className="project-fields">
@@ -787,7 +878,8 @@ export function App() {
         <div className="preview-well">
           <div className="preview-stage" style={{ backgroundColor: lyricStyle.backgroundColor }} aria-label="Karaoke lyrics preview">
             {cdgPlayer ? <CdgPreview player={cdgPlayer} seconds={position} playing={playing} livePosition={livePosition} /> : <>
-              {background?.url && <img src={background.url} alt="Selected karaoke background" />}
+              {background?.url && <BackdropPreview key={background.url} url={background.url} motion={background.motion}
+                looping={backgroundLoop} position={position} playing={playing} onError={setError} />}
               <canvas ref={canvas} />
               {!lines.length && !background?.url && <div className="preview-empty">
                 <StudioIcon name="display" />
@@ -846,7 +938,7 @@ export function App() {
             </article>)}
           </div>
           <div className="inspector-section">
-            <button type="button" disabled={!stems.length || busy} onClick={() => void separate()}>Separate a Source Track…</button>
+            <button type="button" disabled={!stems.length || busy} data-tip="Use the separator and models selected in Preferences." onClick={() => void separate()}>Separate a Source Track…</button>
             <p className="muted">Model and separator are set in Preferences.</p>
           </div>
         </>}
@@ -858,23 +950,40 @@ export function App() {
           </div>
           <div className="toolbar inspector-actions">
             <label className="button-like"><StudioIcon name="file" /> Import Lyrics
-              <input className="file-input" aria-label="Import Lyrics" type="file" accept=".txt,.json,.lrc,.elrc,.srt,.cdg" onChange={event => {
+              <input className="file-input" aria-label="Import Lyrics" type="file" accept=".txt,.json,.lrc,.elrc,.srt,.cdg" disabled={busy || timing} onChange={event => {
                 const file = event.target.files?.[0];
                 if (file) void importLyrics(file);
                 event.currentTarget.value = '';
               }} />
             </label>
+            <button type="button" title="Reflow the lyric draft using the line lengths below. Existing cues keep their timing."
+              disabled={(!lyricsDraft.trim() && !cueText) || busy || timing || !!lyricVersions}
+              onClick={formatLyrics}>Format Lyrics</button>
             {cdgPath && <button type="button" disabled={busy} onClick={() => { setCdgPath(null); setDecodedCdg(null); setStatus('CD+G graphics removed.'); }}>Remove CD+G</button>}
           </div>
           <details className="workspace-details" open={draftOpen} onToggle={event => setDraftOpen(event.currentTarget.open)}>
             <summary>Lyrics Text {draftPending && <span className="summary-pill">Draft</span>}</summary>
             <div className="stack detail-content">
-              <textarea rows={5} className="small-input" aria-label="Lyrics text" placeholder="Paste lyrics, one line per cue" value={lyricsDraft} onChange={event => {
-                const draft = event.target.value;
-                setLyricsDraft(draft);
-                setDraftPending(Boolean(draft.trim()) && draft.trim() !== lines.map(line => line.text).join('\n').trim());
-              }} />
-              <button type="button" disabled={!lyricsDraft.trim() || timing || busy} onClick={makeLines}>Build Cues</button>
+              {lyricVersions && <div className="row">
+                <label className="field-label grow">Lyric Version
+                  <select title="Choose the recording that matches your audio." value="" onChange={event => {
+                    useLyricVersion(lyricVersions.items[Number(event.target.value)], lyricVersions.name);
+                  }}>
+                    <option value="" disabled>Choose a recording</option>
+                    {lyricVersions.items.map((version, index) => <option key={index} value={index}>{versionLabel(version, index)}</option>)}
+                  </select>
+                </label>
+                <button type="button" onClick={() => setLyricVersions(null)}>Cancel</button>
+              </div>}
+              <textarea rows={5} className="small-input" aria-label="Lyrics text" placeholder="Paste lyrics or import a text file" value={lyricsDraft}
+                onChange={event => setLyricText(event.target.value)} />
+              <LyricFormatFields value={formatterOptions} onChange={setLyricFormatOverride} disabled={busy || timing} />
+              <div className="toolbar">
+                <button type="button" title="Build new cues from the draft. This replaces any existing cues."
+                  disabled={!lyricsDraft.trim() || timing || busy || !!lyricVersions} data-tip="Turn the current lyric draft into editable timing cues." onClick={makeLines}>Build Cues</button>
+                {lyricFormatOverride && <button type="button" title="Restore the current session’s formatting preferences."
+                  disabled={busy || timing} onClick={() => setLyricFormatOverride(null)}>Use Preferences</button>}
+              </div>
             </div>
           </details>
           <div className="timing-tools">
@@ -886,7 +995,7 @@ export function App() {
             </label>
             <div className="toolbar">
               <button type="button" className="primary" aria-label="Sync lyrics with AI" title="Align your supplied lyrics to the selected audio"
-                disabled={!lines.length || !alignmentStemId || busy || timing} onClick={() => void alignLyrics()}>AI Sync</button>
+                disabled={!lines.length || !alignmentStemId || busy || timing} data-tip="Align the supplied lyrics to the selected audio on this computer." onClick={() => void alignLyrics()}>AI Sync</button>
               <button type="button" title="Tap line starts with Space during playback" disabled={!canStartTiming} onClick={() => void beginTiming()}>Time Lines</button>
               <button type="button" title="Tap word starts with Space during playback" disabled={!canStartTiming} onClick={() => void beginWordTiming()}>Time Words</button>
             </div>
@@ -1023,8 +1132,8 @@ export function App() {
       </section>
     </div>}
     {/* The dialog takes a draft snapshot when it opens, so wait for saved settings on startup. */}
-    {settingsOpen && settingsLoaded && <PreferencesDialog settings={settings} close={() => setSettingsOpen(false)} onSave={value => {
-      setSettings(value); setSettingsOpen(false); setStatus('Preferences saved.');
+    {settingsOpen && settingsLoaded && <PreferencesDialog settings={settings} close={() => setSettingsOpen(false)} onSave={(value, scope) => {
+      setSettings(value); setSettingsOpen(false); setStatus(scope === 'session' ? 'Preferences applied for this session.' : 'Default preferences saved.');
     }} />}
   </div>;
 }

@@ -1,8 +1,10 @@
 const { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, shell, systemPreferences } = require('electron');
 const fs = require('node:fs/promises');
+const { rmSync } = require('node:fs');
+const { randomUUID } = require('node:crypto');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, text, localFile, readCdg, loadSettings, saveSettings, exportKit, exportVideo, exportCdg, separate, alignLyrics, writeOutput } = require('./studio-operations.cjs');
+const { AUDIO_EXTENSIONS, BACKGROUND_EXTENSIONS, cloudAdapter, text, localFile, readCdg, exportKit, exportVideo, exportCdg, createGifPreview, separate, alignLyrics, writeOutput } = require('./studio-operations.cjs');
 const { validateVoiceRecording } = require('../domain/voice-recording.ts');
 const { loadProject, projectRevision, saveProject } = require('../domain/project-file.mjs');
 const { createRecoveryStore } = require('./recovery.cjs');
@@ -14,6 +16,9 @@ const { createIntegrationCatalog } = require('./integration-catalog.cjs');
 const { createIntegrationSecrets } = require('./integration-secrets.cjs');
 const { checkDangoConnection, normalizeDangoCredentials, separateWithDango } = require('./dango-separator.cjs');
 const { createStudioMenu } = require('./studio-menu.cjs');
+const { createSessionPreferences } = require('./session-preferences.cjs');
+const { createModelLibrary } = require('./model-library.cjs');
+const { cloudSeparators } = require('./cloud-separators.cjs');
 
 // Files are served to the renderer through random one-session URLs, never file:// URLs.
 protocol.registerSchemesAsPrivileged([{
@@ -22,6 +27,8 @@ protocol.registerSchemesAsPrivileged([{
 }]);
 
 const media = new Map();
+const gifPreviews = new Map();
+let gifDirectory;
 let mainWindow;
 let updateStudioMenu;
 let recovery;
@@ -55,6 +62,31 @@ function alignmentProgress(event) {
   };
 }
 
+function mediaUrl(file) {
+  const token = randomUUID();
+  media.set(token, file);
+  return 'studio-media://' + token + '/' + encodeURIComponent(path.basename(file));
+}
+
+async function registerBackdrop(value, ffmpegPath) {
+  const file = await localFile(value, BACKGROUND_EXTENSIONS);
+  const extension = path.extname(file).toLowerCase();
+  if (extension !== '.gif') return { url: mediaUrl(file), motion: extension === '.mp4' };
+  const { size, mtimeMs } = await fs.stat(file);
+  const fingerprint = file + '\0' + size + '\0' + mtimeMs;
+  let preview = gifPreviews.get(fingerprint);
+  if (!preview) {
+    gifDirectory ??= fs.mkdtemp(path.join(app.getPath('temp'), 'tpv-studio-backdrops-'));
+    preview = gifDirectory.then(async directory => {
+      const output = path.join(directory, randomUUID() + '.mp4');
+      await createGifPreview(file, output, ffmpegPath);
+      return output;
+    }).catch(error => { gifPreviews.delete(fingerprint); throw error; });
+    gifPreviews.set(fingerprint, preview);
+  }
+  return { url: mediaUrl(await preview), motion: true };
+}
+
 function registerIntegrations(directory) {
   const secrets = createIntegrationSecrets({ directory: path.join(directory, 'keys'), safeStorage });
   const catalog = createIntegrationCatalog({ directory, secrets });
@@ -69,20 +101,33 @@ function registerIntegrations(directory) {
   handleEditor('studio:list-integrations', () => catalog.list());
   handleEditor('studio:add-integration', (_event, input) => catalog.add(input));
   handleEditor('studio:remove-integration', (_event, id) => catalog.remove(id));
+  async function credentials(adapter) {
+    if (adapter === 'dango') return dangoCredentials();
+    if (!Object.hasOwn(cloudSeparators, adapter)) throw new Error('Choose a supported cloud separator.');
+    const key = await catalog.readKey(adapter);
+    const provider = cloudSeparators[adapter];
+    if (!key) throw new Error('Add your ' + provider.name + ' API key in Preferences → Integrations.');
+    return provider.normalizeKey(key);
+  }
+
   handleEditor('studio:save-integration-key', (_event, input) => {
     const key = input?.id === dangoId
       ? JSON.stringify(normalizeDangoCredentials({ appKey: input.appKey, appSecret: input.key }))
-      : input?.key;
+      : Object.hasOwn(cloudSeparators, input?.id) ? cloudSeparators[input.id].normalizeKey(input.key) : input?.key;
     return catalog.setKey(input?.id, key);
   });
   handleEditor('studio:remove-integration-key', (_event, id) => catalog.removeKey(id));
   handleEditor('studio:verify-dango', async () => checkDangoConnection(await dangoCredentials()));
+  handleEditor('studio:verify-integration', async (_event, adapter) => {
+    const key = await credentials(adapter);
+    return adapter === 'dango' ? checkDangoConnection(key) : cloudSeparators[adapter].verify(key);
+  });
   handleEditor('studio:integration-website', async (_event, id) => {
     const entry = (await catalog.list()).find(integration => integration.id === id);
     if (!entry?.website) throw new Error('This integration has no website.');
     await shell.openExternal(entry.website);
   });
-  return dangoCredentials;
+  return credentials;
 }
 
 function configurePermissions(session) {
@@ -142,11 +187,24 @@ async function chooseSave(defaultPath, name, extension) {
 app.whenReady().then(() => {
   if (process.platform === 'win32') app.setAppUserModelId('com.thepropervolume.karaokestudio');
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(brandIcon());
-  const dangoCredentials = registerIntegrations(path.join(app.getPath('userData'), 'integrations'));
+  const integrationCredentials = registerIntegrations(path.join(app.getPath('userData'), 'integrations'));
   handleEditor('studio:update-menu', (_event, state) => updateStudioMenu(state ?? {}));
   protocol.handle('studio-media', request => serveStudioMedia(request, media.get(new URL(request.url).hostname)));
-  ipcMain.handle('studio:get-settings', () => loadSettings(settingsPath()));
-  ipcMain.handle('studio:save-settings', (_event, value) => saveSettings(settingsPath(), value));
+  const preferences = createSessionPreferences(settingsPath());
+  const models = createModelLibrary(path.join(app.getPath('userData'), 'models'));
+  handleEditor('studio:get-settings', () => preferences.get());
+  handleEditor('studio:preference-defaults', () => preferences.defaults());
+  handleEditor('studio:save-settings', (_event, input) => preferences.save(input?.value, input?.scope));
+  handleEditor('studio:model-library', (_event, folder) => models.inventory(folder));
+  handleEditor('studio:download-model', (_event, id) => models.download(id));
+  handleEditor('studio:choose-models-folder', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, { title: 'Choose UVR Models Folder', properties: ['openDirectory'] });
+    return result.canceled || !result.filePaths[0] ? null : models.directory(result.filePaths[0]);
+  });
+  handleEditor('studio:open-models-folder', async (_event, folder) => {
+    const failure = await shell.openPath(await models.directory(folder));
+    if (failure) throw new Error('Studio could not open the models folder.');
+  });
   handleEditor('studio:separator-models', (_event, input) => discoverModels(input));
   handleEditor('studio:alignment-status', () => alignmentRuntimeStatus(alignmentRuntimeRoot()));
   handleEditor('studio:install-alignment', async event => {
@@ -188,11 +246,9 @@ app.whenReady().then(() => {
     return { file, project: saved, revision: projectRevision(saved) };
   });
   ipcMain.handle('studio:register-media', async (_event, value) => {
-    const file = await localFile(value, new Set([...AUDIO_EXTENSIONS, ...IMAGE_EXTENSIONS]));
-    const token = require('node:crypto').randomUUID();
-    media.set(token, file);
-    return 'studio-media://' + token + '/' + encodeURIComponent(path.basename(file));
+    return mediaUrl(await localFile(value, new Set([...AUDIO_EXTENSIONS, ...BACKGROUND_EXTENSIONS])));
   });
+  handleEditor('studio:register-backdrop', (_event, file) => registerBackdrop(file, preferences.get().ffmpegPath));
   ipcMain.handle('studio:read-cdg', (_event, value) => readCdg(value));
   ipcMain.handle('studio:export-cdg', async (_event, input) => {
     const destination = await chooseSave(text(input.name, 'CD+G name', 180) + '.cdg', 'CD+G Graphics', 'cdg');
@@ -228,7 +284,8 @@ app.whenReady().then(() => {
     return destination;
   });
   ipcMain.handle('studio:choose-image', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: [{ name: 'Image', extensions: [...IMAGE_EXTENSIONS].map(ext => ext.slice(1)) }] });
+    const result = await dialog.showOpenDialog(mainWindow, { title: 'Choose Background Image or Video', properties: ['openFile'],
+      filters: [{ name: 'Backdrop Media', extensions: [...BACKGROUND_EXTENSIONS].map(ext => ext.slice(1)) }] });
     return result.canceled ? null : result.filePaths[0];
   });
   ipcMain.handle('studio:save-text', async (_event, input) => {
@@ -255,24 +312,35 @@ app.whenReady().then(() => {
     if (separationBusy) throw new Error('Stem separation is already running.');
     separationBusy = true;
     try {
-      const cloud = input?.adapter === 'dango';
-      const credentials = cloud ? await dangoCredentials() : null;
-      const source = await localFile(input?.sourcePath, cloud ? new Set(['.wav', '.mp3', '.flac']) : AUDIO_EXTENSIONS);
+      const settings = preferences.get();
+      const { separatorAdapter: adapter, separatorExecutable: executable, separatorModel: model } = settings;
+      const cloud = cloudAdapter(adapter);
+      const credentials = cloud ? await integrationCredentials(adapter) : null;
+      const source = await localFile(input?.sourcePath, adapter === 'dango' ? new Set(['.wav', '.mp3', '.flac']) : AUDIO_EXTENSIONS);
       const canceled = { files: [], outputDirectory: '' };
       const destination = await dialog.showOpenDialog(mainWindow, {
         title: 'Choose a Folder for Separated Stems', properties: ['openDirectory', 'createDirectory'],
       });
       const outputDirectory = destination.filePaths[0];
       if (destination.canceled || !outputDirectory || !isEditorFrame(event)) return canceled;
-      if (!credentials) return await separate({ ...input, sourcePath: source }, outputDirectory);
+      if (!cloud) {
+        const ensembleModels = adapter === 'audio-separator' ? settings.ensembleModels : [];
+        const backingModel = adapter === 'audio-separator' ? settings.backingModel : '';
+        const modelDirectory = await models.prepare([model, ...ensembleModels, ...(backingModel ? [backingModel] : [])], settings.uvrModelsPath, adapter);
+        return await separate({ sourcePath: source, adapter, executable, model, modelDirectory, ensembleModels, backingModel }, outputDirectory);
+      }
 
+      const serviceName = adapter === 'dango' ? 'Dango AI' : cloudSeparators[adapter].name;
       const { response } = await dialog.showMessageBox(mainWindow, {
         type: 'warning', buttons: ['Cancel', 'Upload and Separate'], defaultId: 0, cancelId: 0,
-        title: 'Dango AI Stem Separation', message: 'Upload ' + path.basename(source) + ' to Dango AI?',
-        detail: 'Dango processes the selected audio in the cloud. This job may use credits in your Dango account.',
+        title: serviceName + ' Stem Separation', message: 'Upload ' + path.basename(source) + ' to ' + serviceName + '?',
+        detail: serviceName + ' processes the selected audio online. This job may use credits or incur a charge on your account.',
       });
       if (response !== 1 || !isEditorFrame(event)) return canceled;
-      return await separateWithDango({ credentials, sourcePath: source, outputDirectory, model: input.model });
+      const options = { credentials, sourcePath: source, outputDirectory, model };
+      return adapter === 'dango'
+        ? await separateWithDango({ ...options, modelOptions: model === '31' ? { separateBackingVocals: true } : {} })
+        : await cloudSeparators[adapter].separate(options);
     } finally { separationBusy = false; }
   });
   handleEditor('studio:align-lyrics', (event, input) => {
@@ -290,5 +358,13 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => { quitting = true; });
+app.on('will-quit', () => {
+  void gifDirectory?.then(directory => {
+    const parent = path.resolve(app.getPath('temp'));
+    if (path.dirname(directory) === parent && path.basename(directory).startsWith('tpv-studio-backdrops-')) {
+      try { rmSync(directory, { recursive: true, force: true }); } catch { /* Chromium may still have a frame open. */ }
+    }
+  }).catch(() => {});
+});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

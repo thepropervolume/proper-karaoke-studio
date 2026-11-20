@@ -1,0 +1,29 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. */
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import preferences from '../src/main/session-preferences.cjs';
+import { DEFAULT_LYRIC_FORMAT_OPTIONS } from '../src/domain/lyric-format';
+
+test('session settings survive a second read and saved defaults survive a new session', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'studio-settings-test-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, 'settings.json');
+  await writeFile(file, JSON.stringify({ separatorAdapter: 'dango', separatorModel: '31' }));
+  const settings = preferences.createSessionPreferences(file);
+  const starting = settings.get();
+  assert.equal(starting.separatorAdapter, 'dango');
+  assert.equal(starting.separatorModel, '31');
+  assert.deepEqual(starting.lyricFormat, DEFAULT_LYRIC_FORMAT_OPTIONS);
+  settings.save({ ...starting, alignmentLanguage: 'es' }, 'session');
+  assert.equal(settings.get().alignmentLanguage, 'es');
+  assert.equal(settings.defaults().saved.alignmentLanguage, 'en');
+  assert.equal(settings.defaults().factory.separatorAdapter, 'audio-separator');
+  assert.equal(preferences.createSessionPreferences(file).get().alignmentLanguage, 'en');
+  assert.throws(() => settings.save({ ...starting, separatorModel: 'wrong' }, 'default'), /Choose an available model/);
+  settings.save({ ...starting, alignmentLanguage: 'fr' }, 'default');
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).alignmentLanguage, 'fr');
+  assert.equal(preferences.createSessionPreferences(file).get().alignmentLanguage, 'fr');
+});

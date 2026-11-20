@@ -9,7 +9,7 @@ import operations from '../main/studio-operations.cjs';
 
 export { loadProject, projectRevision, saveProject } from '../domain/project-file.mjs';
 
-const { AUDIO_EXTENSIONS: audioExtensions, IMAGE_EXTENSIONS: imageExtensions } = operations;
+const { AUDIO_EXTENSIONS: audioExtensions, BACKGROUND_EXTENSIONS: backgroundExtensions } = operations;
 const stemLimit = 24;
 
 function option(options, name) {
@@ -163,13 +163,13 @@ async function runProject(action, project, positional, options) {
       count(positional, 0, 0, 'project metadata [--title <title>] [--artist <artist>] [--duration <seconds>]');
       return updateMetadata(project, options);
     case 'backdrop':
-      count(positional, 0, 1, 'project backdrop <image> | project backdrop --clear');
+      count(positional, 0, 1, 'project backdrop <image-or-video> [--no-loop] | project backdrop --clear');
       if (flag(options, 'clear')) {
-        if (positional.length) throw new Error('Choose an image or use --clear.');
-        return { ...project, backgroundPath: null };
+        if (positional.length || flag(options, 'no-loop')) throw new Error('Choose backdrop media or use --clear.');
+        return { ...project, backgroundPath: null, backgroundLoop: true };
       }
-      if (!positional.length) throw new Error('Choose a backdrop image or use --clear.');
-      return { ...project, backgroundPath: await localFile(positional[0], imageExtensions, 'backdrop') };
+      if (!positional.length) throw new Error('Choose a backdrop image or video, or use --clear.');
+      return { ...project, backgroundPath: await localFile(positional[0], backgroundExtensions, 'backdrop'), backgroundLoop: !flag(options, 'no-loop') };
     default:
       throw new Error(`Unknown project action: ${action}`);
   }

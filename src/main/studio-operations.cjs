@@ -8,17 +8,30 @@ const { pipeline } = require('node:stream/promises');
 const yazl = require('yazl');
 const { CdgPlayer, cdgByteLimit, cdgHeight, cdgPacketBytes, cdgWidth } = require('../domain/cdg.ts');
 const { CdgEncoder, cdgExportFrameRate, cdgRgbFrameBytes } = require('../domain/cdg-encode.ts');
+const { portableBackgroundPath } = require('../domain/project.ts');
 const { alignmentLanguages, separatorModels } = require('../domain/studio-options.json');
 const { localSeparatorArgs } = require('./separation-options.cjs');
+const { resolveSeparatorExecutable, normalizeEnsemble, runAudioSeparator } = require('./local-separator.cjs');
+const { DEFAULT_LYRIC_FORMAT_OPTIONS, normalizeLyricFormatOptions, validateLyricFormatOptions } = require('../domain/lyric-format.ts');
 
 const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.aiff', '.wma']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+const BACKGROUND_EXTENSIONS = new Set([...IMAGE_EXTENSIONS, '.gif', '.mp4']);
+const cloudAdapter = adapter => adapter === 'dango' || adapter === 'mvsep' || adapter === 'gaudio';
 const separationDefaults = {
   'audio-separator': { executable: 'audio-separator', model: 'UVR-MDX-NET-Inst_HQ_3.onnx' },
   demucs: { executable: 'demucs', model: 'htdemucs' },
   dango: { executable: '', model: '29' },
+  mvsep: { executable: '', model: '40' },
+  gaudio: { executable: '', model: 'gsep_music_shq_v1' },
 };
-const defaultSettings = { ffmpegPath: 'ffmpeg', separatorAdapter: 'audio-separator', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx', lyricAlignerExecutable: '', alignmentLanguage: 'en' };
+const defaultSettings = {
+  ffmpegPath: 'ffmpeg', separatorAdapter: 'audio-separator', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx',
+  lyricAlignerExecutable: '', alignmentLanguage: 'en', lyricFormat: DEFAULT_LYRIC_FORMAT_OPTIONS,
+  uvrModelsPath: '', ensembleModels: [], backingModel: '',
+};
+const modelId = /^(?!\.{1,2}$)[\w.-]{1,160}$/;
+const isModelId = value => typeof value === 'string' && modelId.test(value);
 
 function supportedAlignmentLanguage(value) {
   const base = typeof value === 'string' ? value.trim().toLowerCase().split('-')[0] : '';
@@ -68,13 +81,18 @@ function loadSettings(file) {
       ffmpegPath: typeof value.ffmpegPath === 'string' ? value.ffmpegPath : defaultSettings.ffmpegPath,
       separatorAdapter,
       separatorExecutable: typeof value.separatorExecutable === 'string' ? value.separatorExecutable : separationDefaults[separatorAdapter].executable,
-      separatorModel: typeof value.separatorModel === 'string' ? value.separatorModel : separationDefaults[separatorAdapter].model,
+      separatorModel: isModelId(value.separatorModel) && (!cloudAdapter(separatorAdapter) || separatorModels[separatorAdapter].some(model => model.id === value.separatorModel))
+        ? value.separatorModel : separationDefaults[separatorAdapter].model,
       lyricAlignerExecutable: typeof value.lyricAlignerExecutable === 'string' ? value.lyricAlignerExecutable : defaultSettings.lyricAlignerExecutable,
       alignmentLanguage: supportedAlignmentLanguage(value.alignmentLanguage) || defaultSettings.alignmentLanguage,
+      lyricFormat: normalizeLyricFormatOptions(value.lyricFormat),
+      uvrModelsPath: typeof value.uvrModelsPath === 'string' && path.isAbsolute(value.uvrModelsPath) ? value.uvrModelsPath : '',
+      ensembleModels: Array.isArray(value.ensembleModels) ? [...new Set(value.ensembleModels.filter(isModelId))].slice(0, 3) : [],
+      backingModel: isModelId(value.backingModel) ? value.backingModel : '',
     };
   } catch { return { ...defaultSettings }; }
 }
-function saveSettings(file, value) {
+function validateSettings(value) {
   const separatorAdapter = value?.separatorAdapter ?? defaultSettings.separatorAdapter;
   if (!Object.hasOwn(separationDefaults, separatorAdapter)) throw new Error('Choose a supported stem separator.');
   const result = {
@@ -84,11 +102,24 @@ function saveSettings(file, value) {
     separatorModel: text(value?.separatorModel, 'model name', 160).trim() || separationDefaults[separatorAdapter].model,
     lyricAlignerExecutable: text(value?.lyricAlignerExecutable, 'Python executable', 4096).trim() || defaultSettings.lyricAlignerExecutable,
     alignmentLanguage: text(value?.alignmentLanguage, 'alignment language', 16).trim() || 'en',
+    lyricFormat: validateLyricFormatOptions(value?.lyricFormat),
+    uvrModelsPath: text(value?.uvrModelsPath ?? '', 'UVR models folder', 4096).trim(),
+    ensembleModels: value?.ensembleModels ?? [],
+    backingModel: text(value?.backingModel ?? '', 'backing-vocal model', 160).trim(),
   };
-  if (!/^(?!\.{1,2}$)[\w.-]+$/.test(result.separatorModel)) throw new Error('Model names may contain letters, digits, dots, underscores, and hyphens.');
-  if (separatorAdapter === 'dango' && !separatorModels.dango.some(model => model.id === result.separatorModel)) throw new Error('Choose an available Dango model.');
+  if (!isModelId(result.separatorModel)) throw new Error('Model names may contain letters, digits, dots, underscores, and hyphens.');
+  if (cloudAdapter(separatorAdapter) && !separatorModels[separatorAdapter].some(model => model.id === result.separatorModel)) throw new Error('Choose an available model for this service.');
+  if (result.uvrModelsPath && !path.isAbsolute(result.uvrModelsPath)) throw new Error('Choose an absolute UVR model folder.');
+  if (!Array.isArray(result.ensembleModels) || result.ensembleModels.length > 3 || !result.ensembleModels.every(isModelId)
+    || (result.backingModel && !isModelId(result.backingModel))) throw new Error('Choose valid models for the ensemble and backing-vocal pass.');
+  result.ensembleModels = [...new Set(result.ensembleModels)];
   result.alignmentLanguage = supportedAlignmentLanguage(result.alignmentLanguage);
   if (!result.alignmentLanguage) throw new Error('Choose a language supported by AI Sync.');
+  return result;
+}
+
+function saveSettings(file, value) {
+  const result = validateSettings(value);
   mkdirSync(path.dirname(file), { recursive: true });
   const temporary = file + '.' + randomUUID() + '.tmp';
   try {
@@ -111,6 +142,15 @@ function runTool(executable, args, label, options = {}) {
 async function spawnTool(executable, args, label, options) {
   const result = await runTool(executable, args, label, options);
   if (result.code !== 0) throw new Error(label + ' failed (' + (result.signal || result.code) + '): ' + result.stderr.slice(-2400));
+}
+
+async function createGifPreview(file, destination, ffmpegPath) {
+  const ffmpeg = text(ffmpegPath, 'FFmpeg executable', 4096).trim() || 'ffmpeg';
+  await writeOutput(destination, true, target => spawnTool(ffmpeg, [
+    '-v', 'error', '-nostdin', '-y', '-ignore_loop', '1', '-i', file, '-map', '0:v:0', '-an',
+    '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2,setsar=1', '-fps_mode', 'vfr', '-c:v', 'libx264',
+    '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-f', 'mp4', target,
+  ], 'Animated backdrop preview'));
 }
 
 async function probeAudio(file, ffmpegPath = defaultSettings.ffmpegPath) {
@@ -218,6 +258,7 @@ async function exportKit(input, destination, overwrite = true) {
   const stems = [];
   for (const stem of input.stems) stems.push({ path: await localFile(stem.path, AUDIO_EXTENSIONS), name: text(stem.name, 'stem name', 300) });
   const cdg = input.cdgPath ? await localFile(input.cdgPath, new Set(['.cdg'])) : null;
+  const background = input.backgroundPath ? await localFile(input.backgroundPath, BACKGROUND_EXTENSIONS) : null;
   const lyricEntries = Object.entries(input.lyrics);
   if (lyricEntries.some(([name]) => !['lyrics.json', 'lyrics.enhanced.lrc', 'lyrics.srt'].includes(name))) throw new Error('Unexpected kit lyrics file.');
   return writeOutput(destination, overwrite, async temporaryFile => {
@@ -230,6 +271,7 @@ async function exportKit(input, destination, overwrite = true) {
       zip.addFile(stem.path, 'stems/' + String(index + 1).padStart(2, '0') + '-' + filename);
     });
     if (cdg) zip.addFile(cdg, 'source/' + path.basename(cdg).replace(/[^\p{L}\p{N}._ -]/gu, '_'));
+    if (background) zip.addFile(background, portableBackgroundPath(background));
     zip.end();
     await pipeline(zip.outputStream, createWriteStream(temporaryFile));
   });
@@ -244,6 +286,8 @@ async function exportVideo(input, destination, overwrite = true) {
   const assPath = path.join(tempDir, 'lyrics.ass');
   try {
     const args = ['-y', '-nostdin'];
+    let movingBackdrop = false;
+    const color = exportBackground(input.backgroundColor, '0x171226');
     if (input.cdgPath) {
       const graphics = path.join(tempDir, 'lyrics.cdg');
       const bytes = await readCdg(input.cdgPath);
@@ -258,8 +302,15 @@ async function exportVideo(input, destination, overwrite = true) {
     } else {
       await fs.writeFile(assPath, text(input.ass, 'subtitle data', 8 * 1024 * 1024), 'utf8');
       await stageLyricFonts(tempDir);
-      if (input.backgroundPath) args.push('-loop', '1', '-framerate', '30', '-i', await localFile(input.backgroundPath, IMAGE_EXTENSIONS));
-      else args.push('-f', 'lavfi', '-i', 'color=c=' + exportBackground(input.backgroundColor, '0x171226') + ':s=1920x1080:r=30:d=' + duration);
+      if (input.backgroundPath) {
+        const source = await localFile(input.backgroundPath, BACKGROUND_EXTENSIONS);
+        const extension = path.extname(source).toLowerCase();
+        movingBackdrop = extension === '.gif' || extension === '.mp4';
+        if (!movingBackdrop) args.push('-loop', '1', '-framerate', '30');
+        else if (input.backgroundLoop !== false) args.push('-stream_loop', '-1');
+        if (extension === '.gif') args.push('-ignore_loop', '1');
+        args.push('-an', '-i', source);
+      } else args.push('-f', 'lavfi', '-i', 'color=c=' + color + ':s=1920x1080:r=30:d=' + duration);
     }
     const stems = [];
     for (const stem of input.stems) {
@@ -269,7 +320,8 @@ async function exportVideo(input, destination, overwrite = true) {
     }
     const filters = [input.cdgPath
       ? '[0:v]fps=30:start_time=0,format=yuv420p,scale=1500:1080:flags=neighbor,pad=1920:1080:210:0,setsar=1,tpad=stop_mode=clone:stop_duration=' + duration + '[v]'
-      : '[0:v]' + (input.backgroundPath ? 'scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1,' : '')
+      : '[0:v]' + (input.backgroundPath ? 'fps=30,scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1,' : '')
+        + (movingBackdrop && input.backgroundLoop === false ? 'tpad=stop_mode=add:stop_duration=' + duration + ':color=' + color + ',' : '')
         + 'subtitles=filename=lyrics.ass:fontsdir=fonts[v]'];
     stems.forEach((stem, index) => filters.push('[' + (index + 1) + ':a]volume=' + stem.volume + '[a' + index + ']'));
     filters.push(stems.map((_stem, index) => '[a' + index + ']').join('') + 'amix=inputs=' + stems.length + ':normalize=0:duration=longest,alimiter=limit=0.95[mix]');
@@ -286,15 +338,26 @@ async function separate(input, directory) {
   const source = await localFile(input?.sourcePath, AUDIO_EXTENSIONS);
   const adapter = input.adapter ?? defaultSettings.separatorAdapter;
   if (adapter !== 'audio-separator' && adapter !== 'demucs') throw new Error('Choose Audio Separator or Demucs for local separation.');
-  const executable = text(input.executable ?? separationDefaults[adapter].executable, 'separator executable', 4096).trim();
+  const executable = await resolveSeparatorExecutable(adapter, text(input.executable ?? separationDefaults[adapter].executable, 'separator executable', 4096).trim());
   const model = text(input.model ?? separationDefaults[adapter].model, 'model name', 160).trim();
   if (!executable || model === '.' || model === '..' || !/^[\w.-]+$/.test(model)) throw new Error('Configure a valid executable and model name in Preferences.');
   const modelArgs = localSeparatorArgs(adapter, input.modelOptions);
+  const { extra, backing } = normalizeEnsemble(model, input.ensembleModels, input.backingModel);
+  if (adapter === 'demucs' && (extra.length || backing)) throw new Error('Choose Audio Separator to use an ensemble or vocal splitter.');
   const outputDirectory = await fs.mkdtemp(path.join(directory, 'tpv-separated-'));
-  const demucs = adapter === 'demucs';
-  if (demucs) await spawnTool(executable, ['--name', model, '--out', outputDirectory, ...modelArgs, source], 'Demucs');
-  else await spawnTool(executable, [source, '--model_filename', model, '--output_dir', outputDirectory, ...modelArgs], 'Audio Separator');
-  const stemDirectory = demucs ? path.join(outputDirectory, model, path.parse(source).name) : outputDirectory;
+  if (adapter === 'audio-separator') {
+    try {
+      return await runAudioSeparator({ source, executable, model, modelDirectory: input.modelDirectory, modelArgs, extra, backing, extensions: AUDIO_EXTENSIONS },
+        outputDirectory, spawnTool);
+    } catch (cause) {
+      // The directory was created for this attempt and has never been exposed to the caller.
+      await fs.rm(outputDirectory, { recursive: true, force: true });
+      throw cause;
+    }
+  }
+  const repo = input.modelDirectory ? ['--repo', input.modelDirectory] : [];
+  await spawnTool(executable, ['--name', model, '--out', outputDirectory, ...repo, ...modelArgs, source], 'Demucs');
+  const stemDirectory = path.join(outputDirectory, model, path.parse(source).name);
   const entries = await fs.readdir(stemDirectory, { withFileTypes: true }).catch(error => {
     if (error.code === 'ENOENT') return [];
     throw error;
@@ -324,4 +387,4 @@ async function alignLyrics(input, scriptPath, prepareExecutable) {
   } finally { await fs.rm(tempDir, { recursive: true, force: true }); }
 }
 
-module.exports = { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, defaultSettings, separationDefaults, text, localFile, readCdg, loadSettings, saveSettings, exportKit, exportVideo, exportCdg, separate, alignLyrics, probeAudio, writeOutput };
+module.exports = { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, BACKGROUND_EXTENSIONS, cloudAdapter, defaultSettings, separationDefaults, text, localFile, readCdg, loadSettings, validateSettings, saveSettings, exportKit, exportVideo, exportCdg, createGifPreview, separate, alignLyrics, probeAudio, writeOutput };

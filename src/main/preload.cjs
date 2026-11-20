@@ -1,7 +1,12 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('studio', {
   getSettings: () => ipcRenderer.invoke('studio:get-settings'),
-  saveSettings: value => ipcRenderer.invoke('studio:save-settings', value),
+  getPreferenceDefaults: () => ipcRenderer.invoke('studio:preference-defaults'),
+  saveSettings: (value, scope) => ipcRenderer.invoke('studio:save-settings', { value, scope }),
+  getModelLibrary: folder => ipcRenderer.invoke('studio:model-library', folder),
+  downloadSeparationModel: id => ipcRenderer.invoke('studio:download-model', id),
+  chooseUvrModelsFolder: () => ipcRenderer.invoke('studio:choose-models-folder'),
+  openModelsFolder: folder => ipcRenderer.invoke('studio:open-models-folder', folder),
   onMenuAction: listener => {
     const onAction = (_event, action) => listener(action);
     ipcRenderer.on('studio:menu-action', onAction);
@@ -22,6 +27,7 @@ contextBridge.exposeInMainWorld('studio', {
   saveIntegrationKey: input => ipcRenderer.invoke('studio:save-integration-key', input),
   removeIntegrationKey: id => ipcRenderer.invoke('studio:remove-integration-key', id),
   verifyDango: () => ipcRenderer.invoke('studio:verify-dango'),
+  verifyIntegration: adapter => ipcRenderer.invoke('studio:verify-integration', adapter),
   openIntegrationWebsite: id => ipcRenderer.invoke('studio:integration-website', id),
   startRecovery: () => ipcRenderer.invoke('studio:recovery-start'),
   updateRecovery: draft => ipcRenderer.invoke('studio:recovery-update', draft),
@@ -33,6 +39,7 @@ contextBridge.exposeInMainWorld('studio', {
   saveProject: (project, opened) => ipcRenderer.invoke('studio:save-project', { project, opened }),
   getPathForFile: file => webUtils.getPathForFile(file),
   registerMedia: filePath => ipcRenderer.invoke('studio:register-media', filePath),
+  registerBackground: filePath => ipcRenderer.invoke('studio:register-backdrop', filePath),
   readCdg: filePath => ipcRenderer.invoke('studio:read-cdg', filePath),
   exportCdg: input => ipcRenderer.invoke('studio:export-cdg', input),
   chooseAudioFiles: () => ipcRenderer.invoke('studio:choose-audio'),
