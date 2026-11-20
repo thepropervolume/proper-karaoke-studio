@@ -1,13 +1,13 @@
 const { app, BrowserWindow, dialog, ipcMain, protocol, systemPreferences } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { Readable } = require('node:stream');
 const { pathToFileURL } = require('node:url');
 const { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, text, localFile, readCdg, loadSettings, saveSettings, exportKit, exportVideo, exportCdg, separate, alignLyrics, writeOutput } = require('./studio-operations.cjs');
 const { validateVoiceRecording } = require('../domain/voice-recording.ts');
 const { loadProject, projectRevision, saveProject } = require('../domain/project-file.mjs');
 const { createRecoveryStore } = require('./recovery.cjs');
 const { importKit } = require('./kit-import.cjs');
+const { serveStudioMedia } = require('./media-protocol.cjs');
 
 // Files are served to the renderer through random one-session URLs, never file:// URLs.
 protocol.registerSchemesAsPrivileged([{
@@ -91,19 +91,7 @@ async function chooseSave(defaultPath, name, extension) {
 app.whenReady().then(() => {
   if (process.platform === 'win32') app.setAppUserModelId('com.thepropervolume.karaokestudio');
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(brandIcon());
-  protocol.handle('studio-media', request => {
-    const filePath = media.get(new URL(request.url).hostname);
-    if (!filePath) return new Response('Not found', { status: 404 });
-    const ext = path.extname(filePath).toLowerCase();
-    const mime = {
-      '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.flac': 'audio/flac', '.m4a': 'audio/mp4',
-      '.aac': 'audio/aac', '.ogg': 'audio/ogg', '.opus': 'audio/ogg', '.aiff': 'audio/aiff',
-      '.wma': 'audio/x-ms-wma', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
-    }[ext] || 'application/octet-stream';
-    return new Response(Readable.toWeb(require('node:fs').createReadStream(filePath)), {
-      headers: { 'Content-Type': mime, 'Access-Control-Allow-Origin': '*', 'Cross-Origin-Resource-Policy': 'cross-origin' },
-    });
-  });
+  protocol.handle('studio-media', request => serveStudioMedia(request, media.get(new URL(request.url).hostname)));
   ipcMain.handle('studio:get-settings', () => loadSettings(settingsPath()));
   ipcMain.handle('studio:save-settings', (_event, value) => saveSettings(settingsPath(), value));
   ipcMain.handle('studio:recovery-start', async () => {

@@ -56,9 +56,21 @@ function IconButton({ icon, label, hint = label, onClick, disabled, className = 
 async function mediaDuration(url: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const audio = new Audio();
+    const dispose = () => {
+      audio.onloadedmetadata = null; audio.onerror = null;
+      audio.removeAttribute('src'); audio.load();
+    };
     audio.preload = 'metadata';
-    audio.onloadedmetadata = () => { const value = audio.duration; audio.removeAttribute('src'); resolve(Number.isFinite(value) ? value : 0); };
-    audio.onerror = () => reject(new Error('This audio file could not be opened for preview.'));
+    audio.onloadedmetadata = () => {
+      const duration = audio.duration;
+      dispose();
+      if (Number.isFinite(duration) && duration > 0) resolve(duration);
+      else reject(new Error('Studio could not read the length of this audio file. Try exporting it as WAV or MP3.'));
+    };
+    audio.onerror = () => {
+      dispose();
+      reject(new Error('Studio could not open this audio file for preview. Check whether the file is available locally.'));
+    };
     audio.src = url;
   });
 }
@@ -119,9 +131,14 @@ export function App() {
 
   useEffect(() => {
     player.current = new KaraokePlayer({ onEvent(event: KaraokePlayerEvent) {
+      if (event.generation !== generation.current) return;
       if (event.type === 'timeline') { setPosition(event.position); setDuration(event.duration); setPlaying(player.current?.snapshot()?.status === 'playing'); }
       if (event.type === 'ended') setPlaying(false);
       if (event.type === 'error') { setError(event.message); setPlaying(false); }
+      if (event.type === 'output-error') {
+        setError('Audio output is unavailable. Check your system audio output, then press Play to retry.');
+        setPlaying(false);
+      }
     } });
     void window.studio.getSettings().then(setSettings).catch(cause => setError(String(cause)));
     const timer = window.setInterval(() => {
@@ -312,12 +329,28 @@ export function App() {
     void loadStems(stems.filter(stem => stem.id !== id));
   };
   const togglePlay = async () => {
-    setError('');
-    if (!generation.current) { setError('Import an audio stem before starting playback.'); return; }
+    const preview = player.current;
+    const snapshot = preview?.snapshot();
+    if (!preview || !snapshot || snapshot.generation !== generation.current) {
+      setError(current => current || 'Import a playable audio stem first.');
+      return;
+    }
+    if (!snapshot.ready) {
+      if (snapshot.status === 'loading') setStatus('Preparing stems for preview…');
+      else setError(current => current || 'Studio could not prepare this audio for preview.');
+      return;
+    }
+    const id = snapshot.generation;
     try {
-      if (playing) player.current?.pause(generation.current);
-      else await player.current?.play(generation.current);
-      setPlaying(!playing);
+      if (snapshot.status === 'playing') { preview.pause(id); return; }
+      if (snapshot.outputBlocked && !await preview.recoverOutput(id, snapshot.outputRevision, '')) {
+        if (id === generation.current) setError('Audio output is unavailable. Check your system audio output, then press Play to retry.');
+        return;
+      }
+      if (id !== generation.current) return;
+      setError('');
+      if (snapshot.status === 'ended') await preview.seek(id, 0);
+      if (id === generation.current) await preview.play(id);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
   const seek = (next: number) => { if (generation.current) void player.current?.seek(generation.current, next); setPosition(next); };
@@ -641,7 +674,7 @@ export function App() {
     return () => window.removeEventListener('keydown', handle);
   }, []);
 
-  const canStartTiming = Boolean(lines.length && generation.current && !busy && !timing);
+  const canStartTiming = Boolean(lines.length && player.current?.snapshot()?.ready && !busy && !timing);
   const activeCue = lines.findIndex(line => position >= line.startSeconds && position < line.endSeconds);
   const projectTitle = title.trim() || 'Untitled Project';
   const fileName = openedProject ? basename(openedProject.file) : undefined;
