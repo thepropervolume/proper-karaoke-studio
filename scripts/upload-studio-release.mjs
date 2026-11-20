@@ -98,10 +98,11 @@ function restrictWindowsKey(file) {
 }
 
 async function connect(args, makeBatch) {
+  const admin = process.env.STUDIO_RELEASE_SERVER_ADMIN === '1';
   const key = process.env.STUDIO_RELEASE_SSH_KEY;
   const hosts = process.env.STUDIO_RELEASE_SSH_KNOWN_HOSTS;
-  if (!key?.trim() || !hosts?.trim()) {
-    throw new Error('Set STUDIO_RELEASE_SSH_KEY and STUDIO_RELEASE_SSH_KNOWN_HOSTS to publish Studio.');
+  if (!admin && (!key?.trim() || !hosts?.trim())) {
+    throw new Error('Use authorized server SSH or set STUDIO_RELEASE_SSH_KEY and STUDIO_RELEASE_SSH_KNOWN_HOSTS.');
   }
   const temporaryRoot = resolve(tmpdir());
   const temporary = await mkdtemp(join(temporaryRoot, 'tpv-studio-upload-'));
@@ -110,17 +111,24 @@ async function connect(args, makeBatch) {
   const knownHosts = join(temporary, 'known_hosts');
   let input;
   try {
-    await writeFile(identity, key.trim().replace(/\r\n/g, '\n') + '\n', { mode: 0o600 });
-    await writeFile(knownHosts, hosts.trim().replace(/\r\n/g, '\n') + '\n', { mode: 0o600 });
-    restrictWindowsKey(identity);
     if (makeBatch) input = openSync(await makeBatch(temporary), 'r');
-    const pinnedHosts = knownHosts.replaceAll('\\', '/');
+    let connection;
+    if (admin) {
+      // An existing verified admin identity can invoke the same restricted
+      // publisher as the release user. No release signing key leaves the host.
+      connection = ['root@apps.thepropervolume.com', 'runuser -u tpv-studio-release -- python3 /opt/tpv-studio-releases/release-command.py ' + args.join(' ')];
+    } else {
+      await writeFile(identity, key.trim().replace(/\r\n/g, '\n') + '\n', { mode: 0o600 });
+      await writeFile(knownHosts, hosts.trim().replace(/\r\n/g, '\n') + '\n', { mode: 0o600 });
+      restrictWindowsKey(identity);
+      const pinnedHosts = knownHosts.replaceAll('\\', '/');
+      connection = ['-F', 'none', '-p', '22', '-i', identity, '-o', 'IdentitiesOnly=yes',
+        '-o', 'GlobalKnownHostsFile=none', '-o', 'UserKnownHostsFile="' + pinnedHosts + '"', target, args.join(' ')];
+    }
     run('ssh', [
-      '-T', '-F', 'none', '-p', '22', '-i', identity,
-      '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
-      '-o', 'GlobalKnownHostsFile=none', '-o', 'UserKnownHostsFile="' + pinnedHosts + '"',
+      '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
       '-o', 'ConnectTimeout=30', '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=4',
-      target, args.join(' '),
+      ...connection,
     ], { stdio: [input ?? 'ignore', 'inherit', 'inherit'] });
   } finally {
     if (input !== undefined) closeSync(input);
@@ -147,7 +155,7 @@ async function stage(platform, commit) {
   });
 }
 
-async function verifyPublished(commit) {
+async function verifyPublished(commit, allowPartial) {
   const releaseUrl = downloadBase + '/v' + version + '/';
   const response = await fetch(releaseUrl + 'release-manifest.json', {
     redirect: 'error',
@@ -155,10 +163,14 @@ async function verifyPublished(commit) {
   });
   if (!response.ok) throw new Error('Could not read the published Studio manifest (HTTP ' + response.status + ').');
   const manifest = await response.json();
-  const expected = Object.keys(assets).flatMap(platform => files(platform).map(file => file.name));
-  if (manifest.version !== version || manifest.sourceCommit !== commit || manifest.partial !== false
-      || !Array.isArray(manifest.assets) || manifest.assets.length !== expected.length) {
+  if (manifest.version !== version || manifest.sourceCommit !== commit || !Array.isArray(manifest.assets)
+      || !manifest.assets.length || manifest.assets.some(asset => !Object.hasOwn(assets, asset.platform))) {
     throw new Error('The public Studio manifest does not match the completed release.');
+  }
+  const platforms = allowPartial ? [...new Set(manifest.assets.map(asset => asset.platform))] : Object.keys(assets);
+  const expected = platforms.flatMap(platform => files(platform).map(file => file.name));
+  if (manifest.partial !== (platforms.length < Object.keys(assets).length) || manifest.assets.length !== expected.length) {
+    throw new Error('The public Studio manifest is missing expected packages.');
   }
   for (const name of expected) {
     const asset = manifest.assets.find(entry => entry.name === name);
@@ -182,20 +194,16 @@ async function main() {
   if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
     throw new Error('Expected a stable numeric version in package.json.');
   }
-  if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== 'v' + version) {
-    throw new Error('Release tag must match v' + version + '.');
-  }
   if (command === 'prepare') return prepare(platform, input);
-  if (!['stage', 'publish', 'verify'].includes(command)) {
-    throw new Error('Use prepare <platform> [build-directory], stage <platform>, publish, or verify.');
+  if (!['stage', 'publish', 'publish-available', 'verify', 'verify-available'].includes(command)) {
+    throw new Error('Use prepare <platform> [build-directory], stage <platform>, publish, publish-available, verify, or verify-available.');
   }
-  const commit = run('git', ['rev-parse', 'HEAD'], { cwd: root, stdio: 'pipe' });
+  const commit = run('git', ['rev-parse', '--verify', '--end-of-options', (process.env.STUDIO_RELEASE_COMMIT || 'HEAD') + '^{commit}'], { cwd: root, stdio: 'pipe' });
   if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error('Expected a full Git commit ID.');
-  if (process.env.GITHUB_SHA && commit !== process.env.GITHUB_SHA) throw new Error('Checkout differs from the CI commit.');
   if (command === 'stage') return stage(platform, commit);
   if (platform !== undefined) throw new Error(command + ' accepts no arguments.');
-  if (command === 'publish') await connect(['publish', version, commit]);
-  return verifyPublished(commit);
+  if (command.startsWith('publish')) await connect([command, version, commit]);
+  return verifyPublished(commit, command.endsWith('-available'));
 }
 
 main().catch(error => {

@@ -28,7 +28,7 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 - Keep local snapshots of unsaved desktop edits and pending lyric text. [Project recovery](project-recovery.md) restores these snapshots after reopening Studio.
 - Operate projects, stems, lyric download and timing, backdrop, preferences and exports from the [CLI](cli.md). Lyric downloads use the existing TPV ktools installation and report its version warnings.
 - Format lyrics and separate stems without a project. Align supplied lyrics into a new project, a timed lyric file, or JSON on stdout. The Windows installer adds the bundled `tpv-karaoke-studio` executable to the appropriate PATH.
-- Build and publish preview installers for Windows, Linux and macOS through the [Studio release workflow](releases.md).
+- Build preview installers for Windows, Linux and macOS and publish them directly to the [Studio release server](releases.md).
 
 ### Not yet implemented
 

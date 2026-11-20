@@ -14,7 +14,9 @@ Keep project media beside your editable project or back it up in a TPV kit befor
 
 ## Build locally
 
-Use Node.js 24 and the native operating system for each package. Run `npm ci` and `npm test` in the Studio checkout. These commands build the corresponding x64 or arm64 packages and put them in `release/`.
+Use Node.js 24 and the native operating system for each package. Use the same clean Git commit for every platform. Set the release version in `package.json` and `package-lock.json` before building. Linux packaging needs `dpkg` and `fakeroot`.
+
+Run `npm ci` and `npm test` in the Studio checkout, then build the platform's packages in `release/`.
 
 | Platform | Build command | Packages |
 | --- | --- | --- |
@@ -23,14 +25,23 @@ Use Node.js 24 and the native operating system for each package. Run `npm ci` an
 | macOS Apple Silicon | `npm run package:mac -- --arm64 --publish never` | DMG and ZIP |
 | macOS Intel | `npm run package:mac -- --x64 --publish never` | DMG and ZIP |
 
-The CI builds use no publisher signing credentials. Windows shows the preview installer as unsigned. macOS preview builds are not notarized. Studio installs its managed Python and WhisperX on Windows x64, Linux x64, and Apple silicon Mac. Set up FFmpeg, Audio Separator, or Demucs separately for their respective features. See the [CLI guide](cli.md), [alignment setup](lyric-synchronization.md), and [audio separation guide](audio-separation.md).
+Run `./scripts/windows/test-installer.ps1` in a clean, elevated Windows VM after the build to check the CLI installation and PATH restoration. Windows and macOS previews ship unsigned.
 
 ## Publish
 
-Run **Build Studio installers** from the default branch in GitHub Actions. Select **Publish all four platform builds to release.thepropervolume.com** to deploy. A `v<version>` tag also triggers publication and must match the version in `package.json`. Select **Keep a private copy in GitHub Actions** on a manual run when a temporary artifact download is needed.
+Prepare each native build using its platform identifier. The command validates the two packages, gives them their public filenames, and writes checksums in `release/staged/<platform>/`.
 
-The workflow needs the repository secret `STUDIO_RELEASE_SSH_KEY` and the repository variable `STUDIO_RELEASE_SSH_KNOWN_HOSTS`. The latter contains the pinned `known_hosts` entry for `apps.thepropervolume.com`. The SSH key is restricted to release staging and publication on the server. Keep the private key in the GitHub secret.
+    node scripts/upload-studio-release.mjs prepare linux-x64 release
 
-Each platform checks the package types, records SHA-256 checksums, and stages its two files by version and commit. Publication runs after all four builds stage successfully. GitHub artifacts are optional because the public downloads are served by the release server.
+For release-service SSH, set `STUDIO_RELEASE_SSH_KEY` and the pinned `apps.thepropervolume.com` host entry in `STUDIO_RELEASE_SSH_KNOWN_HOSTS`. From a machine that already has verified server-admin SSH access, set `STUDIO_RELEASE_SERVER_ADMIN=1` to invoke the same publisher as the release-service account.
 
-The publish job checks the version and commit in the public manifest and the advertised size of every download. Run the same check from the exact release checkout with node scripts/upload-studio-release.mjs verify.
+Stage each built platform from the matching release checkout. The server groups the platform pairs by version and source commit. If the local checkout has advanced since packaging, set `STUDIO_RELEASE_COMMIT` to the commit used for the builds.
+
+    node scripts/upload-studio-release.mjs stage linux-x64
+
+Publish a full release once all four platform pairs are staged. To publish the built pairs when another platform is pending, use `publish-available`. The download page keeps the most recent earlier downloads for missing platforms and labels them with their version. Published version directories are immutable.
+
+    node scripts/upload-studio-release.mjs publish
+    node scripts/upload-studio-release.mjs publish-available
+
+Publication verifies the manifest's version, source commit, and package sizes. Repeat the check with `verify` for a full release or `verify-available` for a partial release. The server uses [deploy/studio-release.py](../deploy/studio-release.py) at `/opt/tpv-studio-releases/release-command.py`.
