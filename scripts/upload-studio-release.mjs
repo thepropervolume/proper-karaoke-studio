@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const target = 'tpv-studio-release@apps.thepropervolume.com';
+const downloadBase = 'https://release.thepropervolume.com/studio';
 const assets = {
   'windows-x64': ['-setup.exe', '.zip'],
   'linux-x64': ['.AppImage', '.deb'],
@@ -146,6 +147,36 @@ async function stage(platform, commit) {
   });
 }
 
+async function verifyPublished(commit) {
+  const releaseUrl = downloadBase + '/v' + version + '/';
+  const response = await fetch(releaseUrl + 'release-manifest.json', {
+    redirect: 'error',
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) throw new Error('Could not read the published Studio manifest (HTTP ' + response.status + ').');
+  const manifest = await response.json();
+  const expected = Object.keys(assets).flatMap(platform => files(platform).map(file => file.name));
+  if (manifest.version !== version || manifest.sourceCommit !== commit || manifest.partial !== false
+      || !Array.isArray(manifest.assets) || manifest.assets.length !== expected.length) {
+    throw new Error('The public Studio manifest does not match the completed release.');
+  }
+  for (const name of expected) {
+    const asset = manifest.assets.find(entry => entry.name === name);
+    if (!asset || !Number.isSafeInteger(asset.bytes) || !/^[a-f0-9]{64}$/.test(asset.sha256)) {
+      throw new Error('Missing package or SHA-256 in the public manifest: ' + name);
+    }
+    const result = await fetch(releaseUrl + encodeURIComponent(name), {
+      method: 'HEAD',
+      redirect: 'error',
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!result.ok || Number(result.headers.get('content-length')) !== asset.bytes) {
+      throw new Error('Public package size does not match the manifest: ' + name);
+    }
+  }
+  console.log('Verified ' + expected.length + ' Studio download URLs at ' + releaseUrl);
+}
+
 async function main() {
   const [command, platform, input] = process.argv.slice(2);
   if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
@@ -155,15 +186,16 @@ async function main() {
     throw new Error('Release tag must match v' + version + '.');
   }
   if (command === 'prepare') return prepare(platform, input);
-  if (!['stage', 'publish'].includes(command)) {
-    throw new Error('Use prepare <platform> [build-directory], stage <platform>, or publish.');
+  if (!['stage', 'publish', 'verify'].includes(command)) {
+    throw new Error('Use prepare <platform> [build-directory], stage <platform>, publish, or verify.');
   }
   const commit = run('git', ['rev-parse', 'HEAD'], { cwd: root, stdio: 'pipe' });
   if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error('Expected a full Git commit ID.');
   if (process.env.GITHUB_SHA && commit !== process.env.GITHUB_SHA) throw new Error('Checkout differs from the CI commit.');
   if (command === 'stage') return stage(platform, commit);
-  if (platform !== undefined) throw new Error('Publish accepts no arguments.');
-  return connect(['publish', version, commit]);
+  if (platform !== undefined) throw new Error(command + ' accepts no arguments.');
+  if (command === 'publish') await connect(['publish', version, commit]);
+  return verifyPublished(commit);
 }
 
 main().catch(error => {
