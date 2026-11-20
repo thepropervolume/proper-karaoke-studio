@@ -1,13 +1,18 @@
 {
   "name": "proper-karaoke-studio",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
-  "author": { "name": "The Proper Volume", "email": "hello@thepropervolume.com" },
+  "author": {
+    "name": "The Proper Volume",
+    "email": "hello@thepropervolume.com"
+  },
   "homepage": "https://release.thepropervolume.com/studio",
   "description": "The Proper Volume Karaoke Studio — create karaoke videos and TPV kits from audio stems and timed lyrics.",
   "main": "dist-electron/main.cjs",
-  "bin": { "tpv-studio": "dist-electron/cli.cjs" },
+  "bin": {
+    "tpv-studio": "dist-electron/cli.cjs"
+  },
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "tsc --noEmit && vite build && node scripts/build-electron.mjs",
@@ -21,19 +26,48 @@
   "build": {
     "appId": "com.thepropervolume.karaokestudio",
     "productName": "The Proper Volume Karaoke Studio",
-    "files": ["dist/**", "dist-electron/main.cjs", "dist-electron/preload.cjs", "package.json"],
-    "extraResources": [
-      { "from": "scripts/align_lyrics.py", "to": "scripts/align_lyrics.py" },
-      { "from": "dist-electron/cli.cjs", "to": "studio-cli.cjs" }
+    "files": [
+      "dist/**",
+      "dist-electron/main.cjs",
+      "dist-electron/preload.cjs",
+      "package.json"
     ],
-    "directories": { "output": "release" },
-    "win": { "target": ["nsis", "zip"] },
-    "linux": { "target": ["AppImage", "deb"] },
-    "mac": { "target": ["dmg", "zip"] }
+    "extraResources": [
+      {
+        "from": "scripts/align_lyrics.py",
+        "to": "scripts/align_lyrics.py"
+      },
+      {
+        "from": "dist-electron/cli.cjs",
+        "to": "studio-cli.cjs"
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    }
   },
   "dependencies": {
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
+    "yauzl": "3.4.0",
     "yazl": "^3.3.1"
   },
   "devDependencies": {

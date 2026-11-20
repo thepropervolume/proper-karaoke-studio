@@ -4,6 +4,9 @@ import { paintKaraFunLyrics } from '../shared/from-booth/display/karafun-lyrics'
 import { finishTimedWord, newLyricLines, recordTimedWordStart, seedTimedWords, timedWordCount, toPortableKitProject, toRenderTiming, type LyricLine, type StudioProject, type StudioRole, type StudioStem } from '../domain/project';
 import { parseLyricsFile, toAss, toLrc, toLyricsJson, toSrt } from '../domain/lyrics-formats';
 import { applyForcedAlignment } from '../domain/forced-alignment';
+import { CdgPlayer, cdgByteLimit } from '../domain/cdg';
+import { CdgPreview } from './CdgPreview';
+import { WaveformTimeline } from './WaveformTimeline';
 import { version } from '../../package.json';
 
 const roles: StudioRole[] = ['instrumental', 'lead', 'backing', 'other'];
@@ -32,6 +35,7 @@ export function App() {
   const [lines, setLines] = useState<LyricLine[]>([]);
   const [title, setTitle] = useState(''), [artist, setArtist] = useState('');
   const [position, setPosition] = useState(0), [duration, setDuration] = useState(0);
+  const [waveform, setWaveform] = useState<{ peaks: Float32Array; duration: number } | null>(null);
   const [playing, setPlaying] = useState(false), [volume, setVolume] = useState(0.8);
   const [lyricsDraft, setLyricsDraft] = useState(''), [nextLine, setNextLine] = useState(0), [nextWord, setNextWord] = useState(0), [captureMode, setCaptureMode] = useState<'line' | 'word'>('line'), [timing, setTiming] = useState(false);
   const [draftPending, setDraftPending] = useState(false);
@@ -43,8 +47,13 @@ export function App() {
   });
   const [settingsOpen, setSettingsOpen] = useState(false), [busy, setBusy] = useState(false);
   const [cdgPath, setCdgPath] = useState<string | null>(null);
+  const [decodedCdg, setDecodedCdg] = useState<CdgPlayer | null>(null);
   const [background, setBackground] = useState<{ url: string; path: string } | null>(null);
-  const [openedProject, setOpenedProject] = useState<{ file: string; revision: string; snapshot: string } | null>(null);
+  const [openedProject, setOpenedProject] = useState<(StudioProjectOrigin & { snapshot: string | null }) | null>(null);
+  const [projectTransition, setProjectTransition] = useState(true);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [recoveryEntries, setRecoveryEntries] = useState<StudioRecoveryEntry[]>([]);
+  const [recoveryError, setRecoveryError] = useState('');
   const initialProjectChecked = useRef(false);
 
   useEffect(() => {
@@ -69,6 +78,9 @@ export function App() {
   useEffect(() => { stemRef.current = stems; }, [stems]);
   useEffect(() => { linesRef.current = lines; }, [lines]);
   const renderTiming = useMemo(() => toRenderTiming(lines, duration), [lines, duration]);
+  const cdgPlayer = lines.length ? null : decodedCdg;
+  const previewDuration = duration || cdgPlayer?.durationSeconds || 0;
+  const livePosition = useCallback(() => player.current?.snapshot()?.position, []);
   const wordCount = useMemo(() => timedWordCount(lines), [lines]);
   const wordOffsets = useMemo(() => {
     let offset = 0;
@@ -87,56 +99,106 @@ export function App() {
 
   const loadStems = useCallback(async (next: StudioStem[], projectDuration?: number) => {
     player.current?.stop();
+    setWaveform(null);
     setPlaying(false); setError('');
-    if (!next.length) { generation.current = ''; setStems([]); setPosition(0); setDuration(projectDuration ?? 0); setStatus('Import audio stems to begin.'); return; }
+    setStems(next);
+    const songDuration = projectDuration ?? Math.max(0, ...next.map(item => item.durationSeconds));
+    setDuration(songDuration); setPosition(0);
+    const inputs: KaraokeStemSource[] = next.flatMap((stem, index) =>
+      stem.url ? [{ id: index + 1, role: stem.role, voice: stem.voice || stem.name, src: stem.url }] : []);
+    setAlignmentStemId(current => next.some(stem => stem.id === current && stem.url)
+      ? current : (next.find(stem => stem.role === 'lead' && stem.url) ?? next.find(stem => stem.url))?.id ?? '');
+    if (!inputs.length) {
+      generation.current = '';
+      setStatus(next.length ? 'No audio stems are available for preview.' : 'Import audio stems to begin.');
+      return;
+    }
     const id = crypto.randomUUID();
     generation.current = id;
-    setStems(next);
-    setAlignmentStemId(current => next.some(stem => stem.id === current) ? current : (next.find(stem => stem.role === 'lead') || next[0]).id);
-    const songDuration = projectDuration ?? Math.max(...next.map(item => item.durationSeconds));
-    setDuration(songDuration); setPosition(0);
-    const inputs: KaraokeStemSource[] = next.map((stem, index) => ({ id: index + 1, role: stem.role, voice: stem.voice || stem.name, src: stem.url }));
     setStatus('Preparing stems for preview…');
     try {
       await player.current!.load({
         generation: id, stems: inputs, durationSeconds: songDuration, volume, outputId: '',
-        mix: allAudible, stemVolumes: Object.fromEntries(next.map((stem, index) => [index + 1, stem.volume])),
+        mix: allAudible, stemVolumes: Object.fromEntries(inputs.map(input => [input.id, next[input.id - 1].volume])),
       });
+      if (generation.current !== id) return;
+      const reference = inputs.find(input => input.role === 'lead') ?? inputs[0];
+      setWaveform(player.current?.waveform(id, reference.id) ?? null);
       setStatus(next.length + ' stem' + (next.length === 1 ? '' : 's') + ' ready · ' + seconds(songDuration));
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); setStatus('Could not prepare the audio.'); }
+    } catch (cause) {
+      if (generation.current !== id) return;
+      setError(cause instanceof Error ? cause.message : String(cause)); setStatus('Could not prepare the audio.');
+    }
   }, [volume]);
 
-  const applyProject = useCallback(async ({ file, project, revision }: OpenedStudioProject) => {
+  const applyProject = useCallback(async ({ project, origin, lyricsDraft: draft }: StudioRecoveryDraft, restored = false) => {
+    const unavailable: string[] = [];
+    const register = async (path: string) => {
+      try { return await window.studio.registerMedia(path); }
+      catch (cause) {
+        if (!restored) throw cause;
+        unavailable.push(basename(path) ?? path);
+        return '';
+      }
+    };
     // Register the new project's media before replacing the current editor state.
     const media = await Promise.all(project.stems.map(async stem => ({
-      ...stem, url: await window.studio.registerMedia(stem.path),
+      ...stem, url: await register(stem.path),
     })));
     const image = project.backgroundPath
-      ? { path: project.backgroundPath, url: await window.studio.registerMedia(project.backgroundPath) }
+      ? { path: project.backgroundPath, url: await register(project.backgroundPath) }
       : null;
+    const source = project.importedCdg ?? null;
+    const graphics = source ? await window.studio.readCdg(source).then(bytes => new CdgPlayer(bytes)).catch(() => {
+      unavailable.push(basename(source) ?? source);
+      return null;
+    }) : null;
     for (const stem of stemRef.current) if (stem.file) URL.revokeObjectURL(stem.url);
     setTitle(project.title);
     setArtist(project.artist);
     setLines(project.lyrics);
-    setLyricsDraft(project.lyrics.map(line => line.text).join('\n'));
-    setDraftPending(false);
+    setLyricsDraft(draft ?? project.lyrics.map(line => line.text).join('\n'));
+    setDraftPending(draft !== null);
     setNextLine(0); setNextWord(0); setTiming(false);
-    setCdgPath(project.importedCdg ?? null);
+    setCdgPath(source);
+    setDecodedCdg(graphics);
     setBackground(image);
     await loadStems(media, project.durationSeconds || undefined);
-    setOpenedProject({ file, revision, snapshot: JSON.stringify(project) });
-    setStatus('Opened ' + basename(file) + '.');
+    setOpenedProject(origin ? { ...origin, snapshot: restored ? null : JSON.stringify(project) } : null);
+    setStatus(restored ? 'Recovered unsaved changes.' : 'Opened ' + basename(origin?.file ?? 'Project') + '.');
+    if (unavailable.length) setError('Some source files are unavailable: ' + unavailable.join(', ') + '. Restore them to their original locations or replace them in the project.');
   }, [loadStems]);
+
+  const applyOpenedProject = useCallback(({ file, project, revision }: OpenedStudioProject) =>
+    applyProject({ project, origin: { file, revision }, lyricsDraft: null }), [applyProject]);
+
+  const refreshRecovery = useCallback(async () => {
+    const entries = await window.studio.listRecovery();
+    setRecoveryEntries(entries);
+    return entries;
+  }, []);
 
   useEffect(() => {
     if (initialProjectChecked.current) return;
     initialProjectChecked.current = true;
     setBusy(true);
-    void window.studio.initialProject()
-      .then(project => project ? applyProject(project) : undefined)
-      .catch(cause => setError(cause instanceof Error ? cause.message : String(cause)))
-      .finally(() => setBusy(false));
-  }, [applyProject]);
+    void (async () => {
+      let initial: OpenedStudioProject | null = null;
+      try {
+        initial = await window.studio.initialProject();
+        if (initial) await applyOpenedProject(initial);
+      } catch (cause) {
+        initial = null;
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+      try {
+        const entries = await window.studio.startRecovery();
+        setRecoveryEntries(entries);
+        if (entries.length && !initial) setRecoveryOpen(true);
+      } catch (cause) { setRecoveryError(cause instanceof Error ? cause.message : String(cause)); }
+      finally { setBusy(false); setProjectTransition(false); }
+    })();
+  }, [applyOpenedProject]);
 
   const addLocalPaths = useCallback(async (paths: string[]) => {
     const additions: StudioStem[] = [];
@@ -184,6 +246,17 @@ export function App() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
   const seek = (next: number) => { if (generation.current) void player.current?.seek(generation.current, next); setPosition(next); };
+  const moveCue = (id: string, start: number) => setLines(current => current.map(line => {
+    if (line.id !== id) return line;
+    const earliest = Math.min(line.startSeconds, ...line.words.map(word => word.startSeconds));
+    const latest = Math.max(line.endSeconds, ...line.words.map(word => word.endSeconds));
+    const delta = Math.max(-earliest, Math.min(start - line.startSeconds, duration - latest));
+    const shift = (time: number) => Math.max(0, Math.round((time + delta) * 1000) / 1000);
+    return {
+      ...line, startSeconds: shift(line.startSeconds), endSeconds: shift(line.endSeconds),
+      words: line.words.map(word => ({ ...word, startSeconds: shift(word.startSeconds), endSeconds: shift(word.endSeconds) })),
+    };
+  }));
   const setMasterVolume = (value: number) => { setVolume(value); if (generation.current) player.current?.setVolume(generation.current, value); };
 
   const makeLines = () => {
@@ -230,7 +303,7 @@ export function App() {
     const at = position, indexToMark = nextLine;
     setLines(current => current.map((line, index) => {
       if (index === indexToMark) return { ...line, startSeconds: at, endSeconds: Math.max(at + 0.1, line.endSeconds) };
-      if (index === indexToMark - 1) return { ...line, endSeconds: at };
+      if (index === indexToMark - 1) return { ...line, endSeconds: Math.max(at, line.startSeconds) };
       return line;
     }));
     setNextLine(index => index + 1);
@@ -250,8 +323,10 @@ export function App() {
   };
   const updateLine = (id: string, patch: Partial<LyricLine>) => setLines(current => current.map(line => {
     if (line.id !== id) return line;
+    const startSeconds = Number.isFinite(patch.startSeconds) ? Math.max(0, patch.startSeconds!) : line.startSeconds;
+    const endSeconds = Math.max(startSeconds, Number.isFinite(patch.endSeconds) ? patch.endSeconds! : line.endSeconds);
     // Text edits invalidate word-level timing so it cannot silently describe old text.
-    return { ...line, ...patch, ...(patch.text !== undefined && patch.text !== line.text ? { words: [] } : {}) };
+    return { ...line, ...patch, startSeconds, endSeconds, ...(patch.text !== undefined && patch.text !== line.text ? { words: [] } : {}) };
   }));
   const updateWord = (lineId: string, wordIndex: number, field: 'startSeconds' | 'endSeconds', value: number) => {
     if (!Number.isFinite(value)) return;
@@ -261,7 +336,7 @@ export function App() {
       words[wordIndex] = field === 'startSeconds'
         ? { ...word, startSeconds: Math.max(0, value), endSeconds: Math.max(value + 0.01, word.endSeconds) }
         : { ...word, endSeconds: Math.max(word.startSeconds + 0.01, value) };
-      return { ...line, words, startSeconds: words[0].startSeconds, endSeconds: words.at(-1)!.endSeconds };
+      return { ...line, words, startSeconds: Math.min(...words.map(item => item.startSeconds)), endSeconds: Math.max(...words.map(item => item.endSeconds)) };
     }));
   };
   const handleCaptureKey = useCallback((event: globalThis.KeyboardEvent) => {
@@ -279,8 +354,16 @@ export function App() {
   }, [handleCaptureKey]);
   const importLyrics = async (file: File) => {
     if (file.name.toLowerCase().endsWith('.cdg')) {
-      setCdgPath(window.studio.getPathForFile(file));
-      setStatus('CD+G source saved with this project. Graphic lyrics are not yet editable as text cues.');
+      setError('');
+      try {
+        if (file.size > cdgByteLimit) throw new Error('Choose a CD+G file with no more than one hour of graphics.');
+        const path = window.studio.getPathForFile(file);
+        if (!path) throw new Error('Choose a local CD+G file.');
+        const decoded = new CdgPlayer(new Uint8Array(await file.arrayBuffer()));
+        setDecodedCdg(decoded);
+        setCdgPath(path);
+        setStatus(lines.length ? 'CD+G graphics attached. Editable cues are used for preview.' : 'CD+G graphics ready. Import the matching audio to play them together.');
+      } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
       return;
     }
     try {
@@ -333,20 +416,68 @@ export function App() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
 
-  const currentProject: StudioProject = {
+  const currentProject = useMemo<StudioProject>(() => ({
     schema: 'com.thepropervolume.karaoke-studio', version: 1, title, artist, durationSeconds: duration,
     stems: stems.map(({ file: _file, url: _url, ...stem }) => stem), lyrics: lines, importedCdg: cdgPath, backgroundPath: background?.path ?? null,
+  }), [title, artist, duration, stems, lines, cdgPath, background?.path]);
+  const projectChanged = useMemo(() => openedProject ? openedProject.snapshot !== JSON.stringify(currentProject)
+    : Boolean(stems.length || lines.length || background || cdgPath || title || artist),
+  [openedProject, currentProject, stems.length, lines.length, background, cdgPath, title, artist]);
+  const pendingLyrics = draftPending ? lyricsDraft : null;
+
+  useEffect(() => {
+    if (projectTransition) return;
+    let current = true;
+    const draft = projectChanged || pendingLyrics !== null ? {
+      project: currentProject,
+      origin: openedProject ? { file: openedProject.file, revision: openedProject.revision } : null,
+      lyricsDraft: pendingLyrics,
+    } : null;
+    void window.studio.updateRecovery(draft).then(
+      () => { if (current) setRecoveryError(''); },
+      cause => { if (current) setRecoveryError(cause instanceof Error ? cause.message : String(cause)); },
+    );
+    return () => { current = false; };
+  }, [currentProject, openedProject, pendingLyrics, projectChanged, projectTransition]);
+
+  const showRecovery = async () => {
+    setRecoveryOpen(true);
+    try { await refreshRecovery(); }
+    catch (cause) { setRecoveryError(cause instanceof Error ? cause.message : String(cause)); }
+  };
+  const restoreRecovery = async (entry: StudioRecoveryEntry) => {
+    if ((projectChanged || draftPending) && !window.confirm('Replace the current unsaved changes with this recovery draft?')) return;
+    setBusy(true); setProjectTransition(true); setError('');
+    try {
+      const draft = await window.studio.loadRecovery(entry.id);
+      if (!draft) throw new Error('This recovery draft is no longer available.');
+      await applyProject(draft, true);
+      // Keep the original draft until its replacement has reached disk.
+      await window.studio.updateRecovery(draft);
+      await window.studio.discardRecovery(entry.id);
+      await refreshRecovery();
+      setRecoveryOpen(false);
+    } catch (cause) { setRecoveryError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); setProjectTransition(false); }
+  };
+  const discardRecovery = async (entry: StudioRecoveryEntry) => {
+    if (!window.confirm('Permanently discard this recovery draft?')) return;
+    setBusy(true);
+    try {
+      await window.studio.discardRecovery(entry.id);
+      const remaining = await refreshRecovery();
+      if (!remaining.length) setRecoveryOpen(false);
+    } catch (cause) { setRecoveryError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
   };
   const openProject = async () => {
-    const edited = openedProject ? openedProject.snapshot !== JSON.stringify(currentProject)
-      : Boolean(stems.length || lines.length || background || cdgPath || title || artist);
-    if ((edited || draftPending) && !window.confirm('Open another project and discard unsaved changes?')) return;
-    setBusy(true); setError('');
+    if ((projectChanged || draftPending) && !window.confirm('Open another project and discard unsaved changes?')) return;
+    setBusy(true); setProjectTransition(true); setError('');
     try {
       const opened = await window.studio.openProject();
-      if (opened) await applyProject(opened);
+      if (opened) await applyOpenedProject(opened);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setProjectTransition(false); }
   };
   const saveProject = async (saveAs = false) => {
     if (draftPending) { setError('Build cues from the new lyric text before saving the project.'); return; }
@@ -380,6 +511,7 @@ export function App() {
       const saved = await window.studio.exportVideo({
         name: safeName(title), duration, artist, title, ffmpegPath: settings.ffmpegPath,
         backgroundPath: background?.path,
+        cdgPath: lines.length ? null : cdgPath,
         stems: stems.map(stem => ({ path: stem.path, name: stem.name, role: stem.role, voice: stem.voice, volume: stem.volume })),
         ass: toAss(title, artist, duration, lines),
       });
@@ -387,9 +519,21 @@ export function App() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); setStatus('Video export failed.'); }
     finally { setBusy(false); }
   };
+  const exportCdg = async (original = false) => {
+    if (original && !cdgPath) return;
+    setBusy(true); setError('');
+    try {
+      const name = safeName(title);
+      const exportDuration = duration || lines.reduce((end, line) => Math.max(end, line.endSeconds), 0);
+      const saved = await window.studio.exportCdg(original && cdgPath ? { name, cdgPath }
+        : { name, duration: exportDuration, ass: toAss(title, artist, exportDuration, lines, 'cdg'), ffmpegPath: settings.ffmpegPath });
+      if (saved) setStatus('Exported CD+G graphics: ' + basename(saved) + '.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
+  };
 
   return <div className="app-shell">
-    <header className="topbar">
+    <header className="topbar" inert={projectTransition || recoveryOpen}>
       <div className="brand-mark">TPV</div><div className="brand-title">The Proper Volume Karaoke Studio</div>
       <input className="project-name" aria-label="Song title" placeholder="Song title" value={title} onChange={event => setTitle(event.target.value)} />
       <input className="project-name" aria-label="Artist" placeholder="Artist" value={artist} onChange={event => setArtist(event.target.value)} />
@@ -398,7 +542,7 @@ export function App() {
       {openedProject && <button disabled={busy || timing} onClick={() => void saveProject(true)}>Save As</button>}
       <button onClick={() => setSettingsOpen(true)} aria-label="Open preferences">⚙ Preferences</button>
     </header>
-    <main className="main-grid">
+    <main className="main-grid" inert={projectTransition || recoveryOpen}>
       <section className="panel">
         <div className="section-title">Audio Stems</div><h2>Build your mix</h2>
         <p className="muted">Add audio tracks and label each voice so the mix and kit stay organized.</p>
@@ -425,6 +569,7 @@ export function App() {
         <div className="toolbar">
           <label className="button-like"><input className="hidden-input" type="file" accept=".txt,.json,.lrc,.elrc,.srt,.cdg" onChange={event => { const file = event.target.files?.[0]; if (file) void importLyrics(file); event.currentTarget.value = ''; }} />＋ Import Lyrics</label>
           <button onClick={makeLines}>Build from text</button>
+          {cdgPath && <button disabled={busy} onClick={() => { setCdgPath(null); setDecodedCdg(null); setStatus('CD+G graphics removed.'); }}>Remove CD+G</button>}
         </div>
         <textarea rows={5} className="small-input" placeholder="Paste lyrics, one line per cue" value={lyricsDraft} onChange={event => {
           const draft = event.target.value;
@@ -450,16 +595,19 @@ export function App() {
       <section className="panel preview-panel">
         <div className="row spaced">
           <div><div className="section-title">Singer Preview</div><h2>{title || 'Untitled Song'}</h2></div>
-          <button onClick={() => void chooseBackground()}>Choose Background</button>
+          <button disabled={Boolean(cdgPlayer)} onClick={() => void chooseBackground()}>Choose Background</button>
         </div>
         <div className="preview-stage" aria-label="Karaoke lyrics preview">
-          {background && <img src={background.url} alt="Selected karaoke background" />}
-          <div className="preview-brand">The Proper Volume Karaoke Studio</div>
-          <canvas ref={canvas} />
-          {!lines.some(line => position >= line.startSeconds && position < line.endSeconds) && <div className="preview-empty">Timed lyrics preview here</div>}
+          {cdgPlayer ? <CdgPreview player={cdgPlayer} seconds={position} playing={playing} livePosition={livePosition} /> : <>
+          {background?.url && <img src={background.url} alt="Selected karaoke background" />}
+            <div className="preview-brand">The Proper Volume Karaoke Studio</div>
+            <canvas ref={canvas} />
+            {!lines.some(line => position >= line.startSeconds && position < line.endSeconds) && <div className="preview-empty">Timed lyrics preview here</div>}
+          </>}
         </div>
         <div className="preview-timeline">
-          <div className="row"><span>{seconds(position)}</span><input aria-label="Playback position" className="grow" type="range" min={0} max={Math.max(duration, 1)} step="0.05" value={Math.min(position, duration || 1)} onChange={event => seek(Number(event.target.value))} /><span>{seconds(duration)}</span></div>
+          {waveform && <WaveformTimeline overview={waveform} duration={previewDuration} position={position} lines={lines} disabled={busy || timing} seek={seek} moveCue={moveCue} />}
+          <div className="row"><span>{seconds(position)}</span><input aria-label="Playback position" className="grow" type="range" min={0} max={previewDuration || 1} step="0.05" value={Math.min(position, previewDuration || 1)} onChange={event => seek(Number(event.target.value))} /><span>{seconds(previewDuration)}</span></div>
           <div className="row spaced">
             <div className="toolbar"><button onClick={() => seek(0)}>⏮ Start</button><button className="primary" onClick={() => void togglePlay()} disabled={!stems.length}>{playing ? 'Ⅱ Pause' : '▶ Play'}</button>
               <label className="row muted">Mix volume <input type="range" min="0" max="1" step="0.01" value={volume} onChange={event => setMasterVolume(Number(event.target.value))} /></label>
@@ -502,14 +650,46 @@ export function App() {
           <button className="primary" disabled={busy || !stems.length} onClick={() => void exportVideo()}>Render Karaoke Video (.mp4)</button>
           <button className="accent" disabled={busy || !stems.length} onClick={() => void exportKit()}>Export TPV Kit (.tpvkit)</button>
           <span className="muted">Video export uses FFmpeg. A TPV kit includes audio stems and lyrics.</span>
-          {cdgPath && <span className="muted">CD+G source will be included in the kit.</span>}
+          <div className="toolbar">
+            {lines.length > 0 && <button disabled={busy} onClick={() => void exportCdg()}>Export CD+G</button>}
+            {cdgPath && <button disabled={busy} onClick={() => void exportCdg(true)}>Export Original CD+G</button>}
+          </div>
         </div>
         <div className="section-title" style={{ marginTop: 24 }}>Project Status</div>
         <p className="status">{busy ? 'Working…' : status}</p>
         {error && <p className="error" role="alert">{error}</p>}
       </section>
     </main>
-    <footer className="footer"><span>Prototype {version}</span><span>TPV Kit · timed lyrics · local stems</span></footer>
+    <footer className="footer" inert={recoveryOpen}>
+      <span>Prototype {version}</span>
+      <div className="row">
+        {recoveryError && !recoveryOpen && <span className="error" role="alert">Recovery unavailable: {recoveryError}</span>}
+        <button disabled={busy || timing} onClick={() => void showRecovery()}>Recovery drafts{recoveryEntries.length ? ' (' + recoveryEntries.length + ')' : ''}</button>
+      </div>
+    </footer>
+    {recoveryOpen && <div className="settings" role="presentation">
+      <section className="settings-card" role="dialog" aria-modal="true" aria-labelledby="recovery-title" onKeyDown={event => {
+        if (event.key === 'Escape' && !busy) setRecoveryOpen(false);
+      }}>
+        <div className="row spaced">
+          <h2 id="recovery-title">Project Recovery</h2>
+          <button autoFocus disabled={busy} onClick={() => setRecoveryOpen(false)}>Close</button>
+        </div>
+        {recoveryEntries.length ? <div className="stack">
+          {recoveryEntries.map(entry => <div className="row spaced" key={entry.id}>
+            <div>
+              <strong>{entry.title || 'Untitled project'}</strong>{entry.artist && ' · ' + entry.artist}
+              <div className="muted">{entry.sourceFile ? basename(entry.sourceFile) : 'New project'} · {new Date(entry.savedAt).toLocaleString()}</div>
+            </div>
+            <div className="row">
+              <button className="primary" disabled={busy} onClick={() => void restoreRecovery(entry)}>Restore</button>
+              <button disabled={busy} onClick={() => void discardRecovery(entry)}>Discard</button>
+            </div>
+          </div>)}
+        </div> : <p>No recovery drafts found.</p>}
+        {recoveryError && <p className="error" role="alert">{recoveryError}</p>}
+      </section>
+    </div>}
     {settingsOpen && <div className="settings" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
       <section className="settings-card" role="dialog" aria-modal="true" aria-labelledby="preferences-title">
         <div className="row spaced"><h2 id="preferences-title">Studio Preferences</h2><button onClick={() => setSettingsOpen(false)}>Close</button></div>

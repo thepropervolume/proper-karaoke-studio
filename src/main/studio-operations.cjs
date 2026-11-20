@@ -6,6 +6,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { pipeline } = require('node:stream/promises');
 const yazl = require('yazl');
+const { CdgPlayer, cdgByteLimit, cdgHeight, cdgPacketBytes, cdgWidth } = require('../domain/cdg.ts');
+const { CdgEncoder, cdgExportFrameRate, cdgRgbFrameBytes } = require('../domain/cdg-encode.ts');
 
 const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.aiff', '.wma']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
@@ -22,6 +24,29 @@ async function localFile(value, extensions) {
   if (!info.isFile() || info.size === 0) throw new Error('The selected file is empty or unavailable.');
   if (extensions && !extensions.has(path.extname(file).toLowerCase())) throw new Error('The selected file type is not supported.');
   return file;
+}
+
+async function readCdg(value) {
+  const file = await localFile(value, new Set(['.cdg']));
+  const handle = await fs.open(file, 'r');
+  try {
+    const { size } = await handle.stat();
+    if (!size || size > cdgByteLimit || size % cdgPacketBytes !== 0) {
+      throw new Error('Choose a CD+G file with complete 24-byte packets and no more than one hour of graphics.');
+    }
+    // Read at most the checked size plus one byte, even if the file changes.
+    const data = Buffer.alloc(size + 1);
+    let length = 0;
+    while (length < data.length) {
+      const { bytesRead } = await handle.read(data, length, data.length - length, length);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    if (length !== size) throw new Error('The CD+G file changed while it was open. Try again.');
+    const bytes = new Uint8Array(data.buffer, data.byteOffset, size);
+    new CdgPlayer(bytes);
+    return bytes;
+  } finally { await handle.close(); }
 }
 function loadSettings(file) {
   try {
@@ -100,6 +125,54 @@ async function writeOutput(destination, overwrite, write) {
   } finally { await fs.rm(temporaryDirectory, { recursive: true, force: true }); }
 }
 
+async function rasterizeCdg(ass, duration, ffmpeg) {
+  const encoder = new CdgEncoder(duration);
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tpv-studio-cdg-'));
+  try {
+    await fs.writeFile(path.join(directory, 'lyrics.ass'), text(ass, 'subtitle data', 8 * 1024 * 1024), 'utf8');
+    const executable = /[\\/]/.test(ffmpeg) ? path.resolve(ffmpeg) : ffmpeg;
+    const child = spawn(executable, [
+      '-v', 'error', '-nostdin', '-f', 'lavfi', '-i', 'color=c=black:s=' + cdgWidth + 'x' + cdgHeight + ':r=' + cdgExportFrameRate + ':d=' + duration,
+      '-vf', 'subtitles=filename=lyrics.ass', '-pix_fmt', 'rgb24', '-threads', '1', '-f', 'rawvideo', 'pipe:1',
+    ], { cwd: directory, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '', startupError;
+    child.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-2400); });
+    child.once('error', error => { startupError = error; });
+    const completion = new Promise(resolve => child.once('close', resolve));
+    const frame = Buffer.alloc(cdgRgbFrameBytes);
+    let length = 0;
+    try {
+      for await (const chunk of child.stdout) {
+        let offset = 0;
+        while (offset < chunk.length) {
+          const count = Math.min(frame.length - length, chunk.length - offset);
+          chunk.copy(frame, length, offset, offset + count);
+          offset += count;
+          length += count;
+          if (length === frame.length) {
+            encoder.pushFrame(frame);
+            length = 0;
+          }
+        }
+      }
+    } catch (error) {
+      child.kill();
+      await completion;
+      throw error;
+    }
+    const code = await completion;
+    if (startupError) throw new Error('Could not start FFmpeg for CD+G export. Check its executable in Preferences.');
+    if (code !== 0 || length) throw new Error('FFmpeg could not render the CD+G lyrics. ' + stderr.trim());
+    return encoder.finish();
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
+}
+
+async function exportCdg(input, destination, overwrite = true) {
+  const bytes = input.cdgPath ? await readCdg(input.cdgPath)
+    : await rasterizeCdg(input.ass, input.duration, text(input.ffmpegPath, 'FFmpeg executable', 4096).trim() || 'ffmpeg');
+  return writeOutput(destination, overwrite, file => fs.writeFile(file, bytes));
+}
+
 async function exportKit(input, destination, overwrite = true) {
   if (!input || !Array.isArray(input.stems) || input.stems.length > 24 || !input.lyrics || typeof input.lyrics !== 'object') throw new Error('Invalid TPV kit project.');
   const manifest = text(input.manifest, 'kit manifest', 2 * 1024 * 1024);
@@ -131,17 +204,32 @@ async function exportVideo(input, destination, overwrite = true) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tpv-studio-'));
   const assPath = path.join(tempDir, 'lyrics.ass');
   try {
-    await fs.writeFile(assPath, text(input.ass, 'subtitle data', 8 * 1024 * 1024), 'utf8');
-    const args = ['-y'];
-    if (input.backgroundPath) args.push('-loop', '1', '-framerate', '30', '-i', await localFile(input.backgroundPath, IMAGE_EXTENSIONS));
-    else args.push('-f', 'lavfi', '-i', 'color=c=0x171226:s=1920x1080:r=30:d=' + duration);
+    const args = ['-y', '-nostdin'];
+    if (input.cdgPath) {
+      const graphics = path.join(tempDir, 'lyrics.cdg');
+      const bytes = await readCdg(input.cdgPath);
+      if ((bytes[0] & 63) !== 9) {
+        // FFmpeg emits frames only for graphics packets. Start with an unchanged
+        // frame when the original stream opens with an empty or non-CDG packet.
+        bytes.fill(0, 0, cdgPacketBytes);
+        bytes[0] = 9;
+      }
+      await fs.writeFile(graphics, bytes);
+      args.push('-protocol_whitelist', 'file,pipe', '-f', 'cdg', '-i', graphics);
+    } else {
+      await fs.writeFile(assPath, text(input.ass, 'subtitle data', 8 * 1024 * 1024), 'utf8');
+      if (input.backgroundPath) args.push('-loop', '1', '-framerate', '30', '-i', await localFile(input.backgroundPath, IMAGE_EXTENSIONS));
+      else args.push('-f', 'lavfi', '-i', 'color=c=0x171226:s=1920x1080:r=30:d=' + duration);
+    }
     const stems = [];
     for (const stem of input.stems) {
       const file = await localFile(stem.path, AUDIO_EXTENSIONS);
       args.push('-i', file);
       stems.push({ volume: Math.max(0, Math.min(2, Number(stem.volume) || 0)) });
     }
-    const filters = ['[0:v]subtitles=filename=lyrics.ass[v]'];
+    const filters = [input.cdgPath
+      ? '[0:v]fps=30:start_time=0,format=yuv420p,scale=1500:1080:flags=neighbor,pad=1920:1080:210:0,setsar=1,tpad=stop_mode=clone:stop_duration=' + duration + '[v]'
+      : '[0:v]subtitles=filename=lyrics.ass[v]'];
     stems.forEach((stem, index) => filters.push('[' + (index + 1) + ':a]volume=' + stem.volume + '[a' + index + ']'));
     filters.push(stems.map((_stem, index) => '[a' + index + ']').join('') + 'amix=inputs=' + stems.length + ':normalize=0:duration=longest,alimiter=limit=0.95[mix]');
     args.push('-filter_complex', filters.join(';'), '-map', '[v]', '-map', '[mix]', '-t', String(duration),
@@ -184,4 +272,4 @@ async function alignLyrics(input, scriptPath) {
   } finally { await fs.rm(tempDir, { recursive: true, force: true }); }
 }
 
-module.exports = { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, defaultSettings, text, localFile, loadSettings, saveSettings, exportKit, exportVideo, separate, alignLyrics, probeAudio, writeOutput };
+module.exports = { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, defaultSettings, text, localFile, readCdg, loadSettings, saveSettings, exportKit, exportVideo, exportCdg, separate, alignLyrics, probeAudio, writeOutput };

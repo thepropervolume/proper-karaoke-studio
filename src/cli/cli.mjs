@@ -5,6 +5,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import operations from '../main/studio-operations.cjs';
 import ktools from '../main/ktools.cjs';
+import kitImport from '../main/kit-import.cjs';
 import { applyForcedAlignment } from '../domain/forced-alignment.ts';
 import { toAss, toLrc, toLyricsJson, toSrt } from '../domain/lyrics-formats.ts';
 import { toPortableKitProject } from '../domain/project.ts';
@@ -15,6 +16,7 @@ const commands = {
   'project init': ' [--title <title>] [--artist <artist>] [--duration <seconds>] [--force]',
   'project info': '',
   'project open': ' [--app <desktop-executable>]',
+  'project import-kit': ' <kit.tpvkit>',
   'project metadata': ' [--title <title>] [--artist <artist>] [--duration <seconds>]',
   'project backdrop': ' <image> | --clear',
   'stems add': ' <audio...> [--role <role>] [--voice <name>] [--name <name>] [--volume <gain>] [--duration <seconds>] [--ffmpeg <exe>]',
@@ -29,14 +31,14 @@ const commands = {
   'lyrics word': ' <line> <word> [--start <seconds>] [--end <seconds>]',
   'lyrics download': ' [--artist <artist>] [--title <title>] [--album <album>] [--duration <seconds>] [--source <source>] [--output-dir <directory>] [--ktools-home <directory>] [--python <exe>] [--input-lyrics <file>] [--no-format] [--force] [--import] [--use <plain|formatted|synced>]',
   'lyrics align': ' [--audio <file>] [--language <code>] [--python <exe>]',
-  'export lyrics': ' <json|lrc|srt> --output <file> [--force]',
+  'export lyrics': ' <json|lrc|srt|cdg> --output <file> [--force] [--original] [--ffmpeg <exe>]',
   'export video': ' --output <file> [--ffmpeg <exe>] [--force]',
   'export kit': ' --output <file> [--force]',
   'settings show': '',
   'settings set': ' <key> <value>',
 };
 
-const booleanOptions = new Set(['help', 'json', 'force', 'add', 'import', 'no-format', 'clear']);
+const booleanOptions = new Set(['help', 'json', 'force', 'add', 'import', 'no-format', 'clear', 'original']);
 const settingsKeys = Object.keys(operations.defaultSettings);
 const help = 'The Proper Volume Karaoke Studio ' + version + '\n\n' +
   'Usage: tpv-studio [--project <file>] [--settings <file>] [--json] <command>\n\n' +
@@ -106,8 +108,23 @@ async function exportProject(action, args, settings) {
   })) throw new Error('Output already exists. Pass --force to replace it.');
   if (action === 'lyrics') {
     const format = args.positional[0] === 'elrc' ? 'lrc' : args.positional[0];
-    if (!['json', 'lrc', 'srt'].includes(format)) usage('Choose json, lrc, or srt.');
-    await operations.writeOutput(destination, overwrite, file => writeFile(file, lyricContents(project)[format], 'utf8'));
+    if (format === 'cdg') {
+      if (args.options.original || !project.lyrics.length) {
+        if (!project.importedCdg) throw new Error('Attach an original CD+G file or add timed lyric cues first.');
+        await operations.exportCdg({ cdgPath: project.importedCdg }, destination, overwrite);
+      } else {
+        const duration = project.durationSeconds || project.lyrics.reduce((end, line) => Math.max(end, line.endSeconds), 0);
+        await operations.exportCdg({
+          duration,
+          ass: toAss(project.title, project.artist, duration, project.lyrics, 'cdg'),
+          ffmpegPath: args.options.ffmpeg || settings.ffmpegPath,
+        }, destination, overwrite);
+      }
+    } else {
+      if (!['json', 'lrc', 'srt'].includes(format)) usage('Choose json, lrc, srt, or cdg.');
+      if (args.options.original || args.options.ffmpeg) usage('--original and --ffmpeg apply to CD+G export.');
+      await operations.writeOutput(destination, overwrite, file => writeFile(file, lyricContents(project)[format], 'utf8'));
+    }
   } else if (action === 'video') {
     await operations.exportVideo({
       title: project.title,
@@ -115,6 +132,7 @@ async function exportProject(action, args, settings) {
       duration: project.durationSeconds,
       stems: project.stems,
       backgroundPath: project.backgroundPath,
+      cdgPath: project.lyrics.length ? null : project.importedCdg,
       ffmpegPath: args.options.ffmpeg || settings.ffmpegPath,
       ass: toAss(project.title, project.artist, project.durationSeconds, project.lyrics),
     }, destination, overwrite);
@@ -256,6 +274,11 @@ async function dispatch(command, args) {
   }
   if (group === 'export') return exportProject(action, args, settings);
   if (command === 'project open') return openDesktop(args);
+  if (command === 'project import-kit') {
+    positionals(args, 1);
+    const { file, project, mediaDirectory } = await kitImport.importKit(args.positional[0], projectFile(args));
+    return { projectPath: file, project, mediaDirectory };
+  }
   if (command === 'stems separate') return separate(args, settings, dependencies);
   if (command === 'lyrics download') return fetchLyrics(args, dependencies);
   if (command === 'lyrics align') return align(args, settings);

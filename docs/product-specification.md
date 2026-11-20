@@ -4,28 +4,33 @@
 
 The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaoke tracks from audio stems and timed lyrics. It previews the result with the same lyric renderer used in The Proper Volume Karaoke Booth, then exports a video or a portable TPV kit.
 
-## Prototype 0.4.0
+## Prototype 0.5.0
 
 ### Implemented
 
 - Import multiple local audio files and label each as instrumental, lead, backing, or other; voice names are editable.
 - Preview synchronized stems with independent stem gain and master volume.
 - Paste lyrics and capture line or word starts during playback with the timing button or Spacebar; cue and word start/end times are directly editable.
+- Scrub through a zoomable waveform and move a selected lyric cue to the playhead while retaining its word timing offsets.
 - Force-align supplied lyrics to a selected local audio track with WhisperX. The alignment path does not run speech recognition, generate lyrics, or change supplied text; exact lyric words and line breaks are retained while timings are added.
 - Import and export the Studio lyrics JSON schema, Enhanced LRC word timestamps, and SRT line cues.
 - Render an MP4 with mixed audio, karaoke highlighting, and an optional still-image background through a configured local FFmpeg executable.
+- Import and preview original CD+G graphics with local audio, render them to MP4, and author new CD+G graphics from timed cues. [CD+G workflow](cdg.md)
 - Export a ZIP-based TPV kit containing relative-path project metadata, lyrics, audio stems, and an optional original CD+G file.
+- Reopen a TPV kit from **Open Project** or the CLI. Studio creates an editable project with its own adjacent media folder and preserves its cue and stem settings.
 - Configure a local Audio Separator executable and UVR-compatible model name. Audio Separator downloads model weights on first use.
 - Open and save editable Studio projects in one shared file format for the desktop editor and CLI.
 - Keep local snapshots of unsaved desktop edits and pending lyric text. [Project recovery](project-recovery.md) restores these snapshots after reopening Studio.
 - Operate projects, stems, lyric download and timing, backdrop, preferences and exports from the [CLI](cli.md). Lyric downloads use the existing TPV ktools installation and report its version warnings.
+- Build and publish preview installers for Windows, Linux and macOS through the [Studio release workflow](releases.md).
 
 ### Not yet implemented
 
-- Reopen exported TPV kits as editable projects.
-- Read CD+G graphics into a preview or editable lyric text, and generate CD+G output.
+- Convert CD+G graphics into editable text cues. The source format stores colored pixels.
 - Import arbitrary JSON schemas; JSON lyric import currently expects the Studio schema.
-- Multiple separation providers, remote services, waveform editing, per-voice recording tools, and installer signing.
+- Direct microphone recording for individual roles, additional separator adapters and remote inference.
+- Signed Windows packages, notarized macOS installers, and installation and upgrade checks on physical devices.
+- Move stable audio and lyrics interfaces into the shared core repository.
 
 ## Audio separation design
 
@@ -40,9 +45,9 @@ A TPV kit is a ZIP archive containing manifest.json, lyrics/lyrics.json, lyrics/
 | Format | Import | Export | Prototype behavior |
 | --- | --- | --- | --- |
 | TPV Studio JSON | Yes | Yes | Versioned Studio lyric/project schema |
-| Enhanced LRC | Yes | Yes | Preserves imported word timestamps; manual taps currently time lines |
+| Enhanced LRC | Yes | Yes | Preserves imported word timestamps and exports edited word timings |
 | SRT | Yes | Yes | Line-level cue times |
-| CD+G | Source asset only | No | Can be kept in a kit; graphic decoding/export is pending |
+| CD+G | Yes | Yes | Graphics preview, MP4 rendering, original copy, and authoring from timed cues |
 
 ## Shared-code boundary
 
@@ -55,3 +60,5 @@ The user supplies and edits lyric text first. Studio sends that text and a chose
 WhisperX's acoustic alignment models are designed for speech rather than singing. For the most useful first pass, select a clear lead-vocal source; manually review and correct the result in the cue sheet. Install the optional dependency with `python -m pip install whisperx` using Python 3.10–3.13. The Python executable and language code are configurable in Preferences. GPU acceleration is used when CUDA is available; otherwise alignment runs on CPU.
 
 This feature requires a separate local WhisperX install and downloads language-specific alignment weights on first use.
+
+The Windows smoke test ran the actual CPU model against a generated voice recording with a 1.5-second lead-in and placed all nine supplied words. Full-song timing quality across vocal styles and languages still needs review.

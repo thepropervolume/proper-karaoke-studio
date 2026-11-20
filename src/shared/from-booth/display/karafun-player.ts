@@ -17,7 +17,7 @@ export type KaraFunPlayerEvent =
   | { type: 'output-error'; generation: string; position: number; revision: number; message: string }
   | { type: 'error'; generation: string; position: number; code: 'decode' | 'requires-premix'; message: string };
 
-type DecodedAudio = Pick<AudioBuffer, 'duration' | 'length' | 'numberOfChannels'>;
+type DecodedAudio = Pick<AudioBuffer, 'duration' | 'length' | 'numberOfChannels'> & Partial<Pick<AudioBuffer, 'getChannelData'>>;
 // These narrow ports also let the timing tests run without a physical audio device.
 type Gain = { gain: { value: number; cancelAndHoldAtTime?(time: number): unknown; linearRampToValueAtTime?(value: number, time: number): unknown }; connect(destination: any): unknown; disconnect(): void };
 type Source = { buffer: DecodedAudio | null; onended: (() => void) | null; connect(destination: any): unknown; start(when: number, offset: number): void; stop(): void; disconnect(): void };
@@ -142,6 +142,26 @@ export class KaraFunPlayer {
       try { source.disconnect(); gain.disconnect(); } catch { /* Disconnected nodes are already silent. */ }
       source.buffer = null;
     }
+  }
+
+  /** Read an overview from the buffers already owned by the preview player. */
+  waveform(generation: string, stemId: number, buckets = 1024): { peaks: Float32Array; duration: number } | null {
+    const buffer = this.matches(generation)?.stems.find(stem => stem.input.id === stemId)?.buffer;
+    if (!buffer?.getChannelData || !Number.isInteger(buckets) || buckets < 1 || buckets > 4096) return null;
+    const peaks = new Float32Array(buckets);
+    for (let channel = 0; channel < Math.min(buffer.numberOfChannels, 2); channel++) {
+      const samples = buffer.getChannelData(channel);
+      for (let bucket = 0; bucket < buckets; bucket++) {
+        const first = Math.floor(bucket * samples.length / buckets);
+        const last = Math.floor((bucket + 1) * samples.length / buckets);
+        // A bounded sample within each bucket avoids blocking the editor on long tracks.
+        const step = Math.max(1, Math.floor((last - first) / 256));
+        for (let index = first; index < last; index += step) {
+          peaks[bucket] = Math.max(peaks[bucket], Math.abs(samples[index]));
+        }
+      }
+    }
+    return { peaks, duration: buffer.duration };
   }
 
   async load(input: KaraFunPlaybackInput): Promise<void> {

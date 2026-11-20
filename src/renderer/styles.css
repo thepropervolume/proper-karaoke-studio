@@ -36,8 +36,13 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 .preview-stage { position: relative; align-self: center; width: 100%; aspect-ratio: 16/9; border-radius: 14px; overflow: hidden; border: 1px solid #4a405b; background: radial-gradient(ellipse at center, #352550, #111018 72%); }
 .preview-stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .preview-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.cdg-preview { background: #000; position: absolute; inset: 0; display: grid; place-items: center; }
+.preview-stage .cdg-preview canvas { position: static; height: 100%; width: auto; max-width: 100%; object-fit: contain; image-rendering: pixelated; }
 .preview-brand { position: absolute; z-index: 2; left: 26px; top: 20px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .13em; color: #faf9ff; text-shadow: 0 2px 12px #000; }
 .preview-timeline { display: grid; gap: 8px; }
+.waveform-timeline { display: grid; gap: 6px; }
+.waveform-timeline canvas { width: 100%; height: 65px; border: 1px solid #514766; border-radius: 6px; cursor: crosshair; }
+.waveform-timeline select, .waveform-timeline button { padding: 5px 8px; font-size: 12px; }
 input[type=range] { padding: 0; accent-color: #0eb7ff; }
 .lyrics-list { display: grid; gap: 7px; max-height: 30vh; overflow: auto; margin: 8px 0; }
 .lyric-row { display: grid; grid-template-columns: 52px 1fr; align-items: center; gap: 7px; }

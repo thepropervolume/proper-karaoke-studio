@@ -120,7 +120,10 @@ function updateMetadata(project, options) {
 async function importLyrics(project, source) {
   const input = await localFile(source, null, 'lyric');
   const extension = extname(input).toLowerCase();
-  if (extension === '.cdg') return { ...project, importedCdg: input };
+  if (extension === '.cdg') {
+    await operations.readCdg(input);
+    return { ...project, importedCdg: input };
+  }
   const contents = await readFile(input, 'utf8');
   if (extension === '.txt') return withUntimedLyrics(project, contents);
   const imported = parseLyricsFile(input, contents.replace(/^\uFEFF/, ''));

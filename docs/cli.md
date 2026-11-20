@@ -18,10 +18,17 @@ The project references the original media files. Use a TPV kit to package the st
     tpv-studio lyrics line 1 --start 00:05.250 --end 9
     tpv-studio lyrics word 1 2 --start 6.1 --end 6.6
     tpv-studio export lyrics lrc --output "Song.enhanced.lrc"
+    tpv-studio export lyrics cdg --output "Song.cdg"
     tpv-studio export video --output "Song.mp4"
     tpv-studio export kit --output "Song.tpvkit"
 
+Reopen a portable kit into a new editable project. Studio extracts its media into a sibling folder and references those copies in the new project.
+
+    tpv-studio project import-kit "Song.tpvkit" --project "Restored Song.tpv.json"
+
 Stem and line selectors accept IDs or one-based indexes. Word selectors use one-based indexes within a line. Numeric times are in seconds and manual cue inputs also accept `mm:ss.mmm`. FFmpeg measures imported audio unless you give `--duration`. Stem separation can optionally add its results to the project with `--add`. See the [lyric alignment guide](lyric-synchronization.md) and [stem separation guide](audio-separation.md) for their local runtime requirements.
+
+Import a CD+G source with `lyrics import <file.cdg>`. Add its matching audio with `stems add` and use `export video` to render the graphics with audio. With editable lyric cues, `export lyrics cdg` draws a new graphics track. Add `--original` to copy the attached source byte for byte. The [CD+G guide](cdg.md) describes supported exports and playback.
 
 ## Download lyrics with ktools
 

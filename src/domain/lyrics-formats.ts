@@ -106,11 +106,15 @@ export function toLyricsJson(title: string, artist: string, durationSeconds: num
   return JSON.stringify({ schema: 'com.thepropervolume.karaoke-studio', version: 1, title, artist, durationSeconds, lyrics: lines }, null, 2) + '\n';
 }
 
-export function toAss(title: string, artist: string, duration: number, lines: readonly LyricLine[]): string {
+export function toAss(title: string, artist: string, duration: number, lines: readonly LyricLine[], target: 'video' | 'cdg' = 'video'): string {
   const esc = (value: string) => value.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}').replace(/\r?\n/g, '\\N');
-  const header = '[Script Info]\nTitle: ' + esc(title) + ' - ' + esc(artist) + '\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 2\n\n' +
+  const resolution = target === 'cdg' ? 'PlayResX: 300\nPlayResY: 216\nWrapStyle: 0' : 'PlayResX: 1920\nPlayResY: 1080\nWrapStyle: 2';
+  const style = target === 'cdg'
+    ? 'Style: Default,Arial,20,&H00FFFFFF,&H00AA22DD,&H00000000,&H00000000,-1,0,1,0,0,2,14,14,72,1\n\n'
+    : 'Style: Default,Arial,64,&H00FFFFFF,&H007A16D5,&H80101020,&H80101020,-1,0,1,4,1,2,110,110,120,1\n\n';
+  const header = '[Script Info]\nTitle: ' + esc(title) + ' - ' + esc(artist) + '\nScriptType: v4.00+\n' + resolution + '\n\n' +
     '[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n' +
-    'Style: Default,Arial,64,&H00FFFFFF,&H007A16D5,&H80101020,&H80101020,-1,0,1,4,1,2,110,110,120,1\n\n' +
+    style +
     '[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n';
   const stamp = (seconds: number) => {
     const cs = Math.max(0, Math.round(seconds * 100));

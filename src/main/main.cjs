@@ -2,8 +2,10 @@ const { app, BrowserWindow, dialog, ipcMain, protocol } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { Readable } = require('node:stream');
-const { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, text, localFile, loadSettings, saveSettings, exportKit, exportVideo, separate, alignLyrics } = require('./studio-operations.cjs');
+const { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, text, localFile, readCdg, loadSettings, saveSettings, exportKit, exportVideo, exportCdg, separate, alignLyrics } = require('./studio-operations.cjs');
 const { loadProject, projectRevision, saveProject } = require('../domain/project-file.mjs');
+const { createRecoveryStore } = require('./recovery.cjs');
+const { importKit } = require('./kit-import.cjs');
 
 // Files are served to the renderer through random one-session URLs, never file:// URLs.
 protocol.registerSchemesAsPrivileged([{
@@ -13,6 +15,8 @@ protocol.registerSchemesAsPrivileged([{
 
 const media = new Map();
 let mainWindow;
+let recovery;
+let quitting = false;
 
 function settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
 async function openProject(file) {
@@ -20,10 +24,26 @@ async function openProject(file) {
   return { file, project, revision: projectRevision(project) };
 }
 function createWindow() {
+  const recoveryDirectory = path.join(app.getPath('userData'), 'recovery');
+  recovery = createRecoveryStore(recoveryDirectory);
   mainWindow = new BrowserWindow({
     width: 1440, height: 940, minWidth: 1050, minHeight: 680,
     title: 'The Proper Volume Karaoke Studio', backgroundColor: '#171226',
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  const window = mainWindow;
+  let closing = false;
+  let waitingForRecovery = false;
+  window.on('close', event => {
+    if (closing) return;
+    event.preventDefault();
+    if (waitingForRecovery) return;
+    waitingForRecovery = true;
+    void recovery.flush().catch(error => console.error('Could not save the recovery draft:', error)).finally(() => {
+      closing = true;
+      if (quitting) app.quit();
+      else if (!window.isDestroyed()) window.close();
+    });
   });
   if (process.env.VITE_DEV_SERVER_URL) mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
@@ -48,13 +68,32 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('studio:get-settings', () => loadSettings(settingsPath()));
   ipcMain.handle('studio:save-settings', (_event, value) => saveSettings(settingsPath(), value));
+  ipcMain.handle('studio:recovery-start', async () => {
+    // A restarted renderer adopts a fresh draft, leaving its prior edits available.
+    await recovery.flush().catch(error => console.error('Could not save the previous recovery draft:', error));
+    recovery = createRecoveryStore(path.join(app.getPath('userData'), 'recovery'));
+    return recovery.list();
+  });
+  ipcMain.handle('studio:recovery-update', (_event, draft) => recovery.update(draft));
+  ipcMain.handle('studio:recovery-list', () => recovery.list());
+  ipcMain.handle('studio:recovery-load', (_event, id) => recovery.get(id));
+  ipcMain.handle('studio:recovery-discard', (_event, id) => recovery.discard(id));
   ipcMain.handle('studio:initial-project', () => {
     const file = app.commandLine.getSwitchValue('studio-project');
     return file && path.isAbsolute(file) ? openProject(file) : null;
   });
   ipcMain.handle('studio:open-project', async () => {
-    const selected = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: [{ name: 'Studio Project', extensions: ['json'] }] });
-    return selected.canceled || !selected.filePaths[0] ? null : openProject(selected.filePaths[0]);
+    const selected = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile'],
+      filters: [{ name: 'Studio Projects and TPV Kits', extensions: ['json', 'tpvkit'] }],
+    });
+    const source = selected.filePaths[0];
+    if (selected.canceled || !source) return null;
+    if (path.extname(source).toLowerCase() !== '.tpvkit') return openProject(source);
+    const destination = await chooseSave(path.join(path.dirname(source), path.basename(source, path.extname(source)) + '.tpv.json'), 'New Studio Project', 'json');
+    if (!destination) return null;
+    const { file, project } = await importKit(source, destination);
+    return { file, project, revision: projectRevision(project) };
   });
   ipcMain.handle('studio:save-project', async (_event, { project, opened }) => {
     const file = opened?.file || await chooseSave((String(project.title || 'Untitled').replace(/[\\/:*?"<>|]/g, '').trim() || 'Untitled') + '.tpv.json', 'Studio Project', 'json');
@@ -68,6 +107,11 @@ app.whenReady().then(() => {
     const token = require('node:crypto').randomUUID();
     media.set(token, file);
     return 'studio-media://' + token + '/' + encodeURIComponent(path.basename(file));
+  });
+  ipcMain.handle('studio:read-cdg', (_event, value) => readCdg(value));
+  ipcMain.handle('studio:export-cdg', async (_event, input) => {
+    const destination = await chooseSave(text(input.name, 'CD+G name', 180) + '.cdg', 'CD+G Graphics', 'cdg');
+    return destination ? exportCdg(input, destination) : null;
   });
   ipcMain.handle('studio:choose-audio', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile', 'multiSelections'], filters: [{ name: 'Audio', extensions: [...AUDIO_EXTENSIONS].map(ext => ext.slice(1)) }] });
@@ -107,5 +151,6 @@ app.whenReady().then(() => {
   createWindow();
 });
 
+app.on('before-quit', () => { quitting = true; });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
