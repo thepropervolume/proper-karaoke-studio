@@ -183,10 +183,10 @@ def page(manifest, *, index=False, versions=(), older_assets=()):
   <a class="skip-link" href="#main">Skip to downloads</a>
   <header class="site-header">
     <div class="shell topbar">
-      <a class="brand" href="/">
+      <a class="brand" href="https://thepropervolume.com/">
         <picture>
           <source media="(prefers-color-scheme: dark)" srcset="/assets/tpv-wordmark-night.svg">
-          <img src="/assets/tpv-wordmark-day.svg" alt="The Proper Volume" width="144" height="72">
+          <img src="/assets/tpv-wordmark-day.svg" alt="The Proper Volume" width="144" height="48">
         </picture>
       </a>
       <a href="/">All downloads</a>
@@ -213,10 +213,10 @@ def page(manifest, *, index=False, versions=(), older_assets=()):
         <li><a href="https://github.com/thepropervolume/proper-karaoke-studio/tree/{source}"><strong>Corresponding source code</strong></a></li>
       </ul>
     </section>
-    {f'<section class="card"><h2>Latest builds for other platforms</h2><ul class="files">{older}</ul></section>' if older else ''}
+    {f'<section class="card platform-fallback"><h2>Latest builds for other platforms</h2><ul class="files">{older}</ul></section>' if older else ''}
     {f'<section class="card history"><h2>Earlier releases</h2><ul>{history}</ul></section>' if history else ''}
+    <footer class="release-footer">{footer}</footer>
   </main>
-  <footer class="shell release-footer">{footer}</footer>
 </body>
 </html>
 """
