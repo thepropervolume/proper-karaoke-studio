@@ -9,6 +9,8 @@ const yazl = require('yazl');
 const { CdgPlayer, cdgByteLimit, cdgHeight, cdgPacketBytes, cdgWidth } = require('../domain/cdg.ts');
 const { CdgEncoder, cdgExportFrameRate, cdgRgbFrameBytes } = require('../domain/cdg-encode.ts');
 const { portableBackgroundPath } = require('../domain/project.ts');
+const { portableLyricFontPath } = require('../domain/lyric-style.ts');
+const { describeLyricFont } = require('./lyric-fonts.cjs');
 const { alignmentLanguages, separatorModels } = require('../domain/studio-options.json');
 const { localSeparatorArgs } = require('./separation-options.cjs');
 const { resolveSeparatorExecutable, normalizeEnsemble, runAudioSeparator } = require('./local-separator.cjs');
@@ -188,7 +190,7 @@ function exportBackground(value, fallback) {
   return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? '0x' + value.slice(1) : fallback;
 }
 
-async function stageLyricFonts(directory) {
+async function stageLyricFonts(directory, customFontPath) {
   const candidates = [
     process.resourcesPath && path.join(process.resourcesPath, 'lyric-fonts'),
     path.join(__dirname, 'lyric-fonts'),
@@ -197,18 +199,23 @@ async function stageLyricFonts(directory) {
   ].filter(Boolean);
   for (const source of candidates) {
     if (!(await fs.stat(source).catch(() => null))?.isDirectory()) continue;
-    await fs.cp(source, path.join(directory, 'fonts'), { recursive: true });
+    const fonts = path.join(directory, 'fonts');
+    await fs.cp(source, fonts, { recursive: true });
+    if (customFontPath) {
+      const custom = await describeLyricFont(customFontPath);
+      await fs.copyFile(custom.path, path.join(directory, portableLyricFontPath(custom.path)));
+    }
     return;
   }
   throw new Error('Studio’s lyric fonts could not be found. Repair the Studio installation and try again.');
 }
 
-async function rasterizeCdg(ass, duration, ffmpeg, color) {
+async function rasterizeCdg(ass, duration, ffmpeg, color, customFontPath) {
   const encoder = new CdgEncoder(duration);
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tpv-studio-cdg-'));
   try {
     await fs.writeFile(path.join(directory, 'lyrics.ass'), text(ass, 'subtitle data', 8 * 1024 * 1024), 'utf8');
-    await stageLyricFonts(directory);
+    await stageLyricFonts(directory, customFontPath);
     const executable = /[\\/]/.test(ffmpeg) ? path.resolve(ffmpeg) : ffmpeg;
     const child = spawn(executable, [
       '-v', 'error', '-nostdin', '-f', 'lavfi', '-i', 'color=c=' + exportBackground(color, 'black') + ':s=' + cdgWidth + 'x' + cdgHeight + ':r=' + cdgExportFrameRate + ':d=' + duration,
@@ -248,7 +255,7 @@ async function rasterizeCdg(ass, duration, ffmpeg, color) {
 
 async function exportCdg(input, destination, overwrite = true) {
   const bytes = input.cdgPath ? await readCdg(input.cdgPath)
-    : await rasterizeCdg(input.ass, input.duration, text(input.ffmpegPath, 'FFmpeg executable', 4096).trim() || 'ffmpeg', input.backgroundColor);
+    : await rasterizeCdg(input.ass, input.duration, text(input.ffmpegPath, 'FFmpeg executable', 4096).trim() || 'ffmpeg', input.backgroundColor, input.customFontPath);
   return writeOutput(destination, overwrite, file => fs.writeFile(file, bytes));
 }
 
@@ -259,6 +266,7 @@ async function exportKit(input, destination, overwrite = true) {
   for (const stem of input.stems) stems.push({ path: await localFile(stem.path, AUDIO_EXTENSIONS), name: text(stem.name, 'stem name', 300) });
   const cdg = input.cdgPath ? await localFile(input.cdgPath, new Set(['.cdg'])) : null;
   const background = input.backgroundPath ? await localFile(input.backgroundPath, BACKGROUND_EXTENSIONS) : null;
+  const font = input.customFontPath ? await describeLyricFont(input.customFontPath) : null;
   const lyricEntries = Object.entries(input.lyrics);
   if (lyricEntries.some(([name]) => !['lyrics.json', 'lyrics.enhanced.lrc', 'lyrics.srt'].includes(name))) throw new Error('Unexpected kit lyrics file.');
   return writeOutput(destination, overwrite, async temporaryFile => {
@@ -272,6 +280,7 @@ async function exportKit(input, destination, overwrite = true) {
     });
     if (cdg) zip.addFile(cdg, 'source/' + path.basename(cdg).replace(/[^\p{L}\p{N}._ -]/gu, '_'));
     if (background) zip.addFile(background, portableBackgroundPath(background));
+    if (font) zip.addFile(font.path, portableLyricFontPath(font.path));
     zip.end();
     await pipeline(zip.outputStream, createWriteStream(temporaryFile));
   });
@@ -301,7 +310,7 @@ async function exportVideo(input, destination, overwrite = true) {
       args.push('-protocol_whitelist', 'file,pipe', '-f', 'cdg', '-i', graphics);
     } else {
       await fs.writeFile(assPath, text(input.ass, 'subtitle data', 8 * 1024 * 1024), 'utf8');
-      await stageLyricFonts(tempDir);
+      await stageLyricFonts(tempDir, input.customFontPath);
       if (input.backgroundPath) {
         const source = await localFile(input.backgroundPath, BACKGROUND_EXTENSIONS);
         const extension = path.extname(source).toLowerCase();

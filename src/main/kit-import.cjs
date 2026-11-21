@@ -8,6 +8,7 @@ const { crc32 } = require('node:zlib');
 const yauzl = require('yauzl');
 const { saveProject, validateProject } = require('../domain/project-file.mjs');
 const { AUDIO_EXTENSIONS, BACKGROUND_EXTENSIONS, localFile } = require('./studio-operations.cjs');
+const { FONT_EXTENSIONS, describeLyricFont, fontLimit } = require('./lyric-fonts.cjs');
 
 const MIB = 1024 * 1024;
 const entryLimit = 128;
@@ -101,7 +102,10 @@ function buildAssetPlan(entries, data) {
   const stems = data.stems.map((stem, index) => add(stem.path, 'stems', 'stem-' + (index + 1), AUDIO_EXTENSIONS));
   const cdg = data.importedCdg == null ? null : add(data.importedCdg, 'source', 'source', cdgExtensions);
   const background = data.backgroundPath == null ? null : add(data.backgroundPath, 'background', 'background', BACKGROUND_EXTENSIONS);
-  return { plan, stems, cdg, background };
+  const storedFont = data.lyricStyle?.customFont?.path;
+  const font = storedFont == null ? null : add(storedFont, 'fonts', 'lyric-font', FONT_EXTENSIONS);
+  if (font && plan.at(-1).entry.uncompressedSize > fontLimit) throw new Error('The kit contains an oversized lyric font.');
+  return { plan, stems, cdg, background, font };
 }
 
 /** Reopen a portable kit into a new project and a sibling directory of its local media. */
@@ -120,7 +124,7 @@ async function importKit(kitPath, destination) {
     if (zip.entryCount > entryLimit) throw new Error('The kit contains too many archive entries.');
     const entries = await indexEntries(zip);
     const { data, project } = await readManifest(zip, entries.get('manifest.json'), file);
-    const { plan, stems, cdg, background } = buildAssetPlan(entries, data);
+    const { plan, stems, cdg, background, font } = buildAssetPlan(entries, data);
     if (plan.length) {
       const prefix = path.basename(file).replace(/(?:\.tpv)?\.json$/i, '').slice(0, 50) || 'Studio';
       mediaDirectory = await mkdtemp(path.join(path.dirname(file), prefix + '.media-'));
@@ -131,11 +135,13 @@ async function importKit(kitPath, destination) {
       await readEntry(zip, asset.entry, createWriteStream(extracted, { flags: 'wx', mode: 0o600 }));
     }
     const assetPath = name => name === null ? null : path.join(mediaDirectory, name);
+    const lyricStyle = font ? { ...project.lyricStyle, customFont: await describeLyricFont(assetPath(font)) } : project.lyricStyle;
     const saved = await saveProject(file, {
       ...project,
       stems: project.stems.map((stem, index) => ({ ...stem, path: assetPath(stems[index]) })),
       importedCdg: assetPath(cdg),
       backgroundPath: assetPath(background),
+      lyricStyle,
     }, { createOnly: true });
     return { file, project: saved, mediaDirectory };
   } catch (error) {

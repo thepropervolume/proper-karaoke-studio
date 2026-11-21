@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { link, open, readFile, rename, rm } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import { normalizeLyricStyle } from './lyric-style.ts';
+import { normalizeWordTimingDrafts } from './manual-timing.ts';
 
 export const projectSchema = 'com.thepropervolume.karaoke-studio';
 export const stemRoles = ['instrumental', 'lead', 'backing', 'other'];
@@ -87,6 +88,9 @@ export function validateProject(input, projectPath) {
       words: line.words.map((word, wordIndex) => cue(word, `${label}, word ${wordIndex + 1}`)),
     };
   });
+  const wordTimingDrafts = normalizeWordTimingDrafts(value.wordTimingDrafts, lyrics);
+  const lyricStyle = normalizeLyricStyle(value.lyricStyle);
+  if (lyricStyle.customFont) lyricStyle.customFont.path = mediaPath(lyricStyle.customFont.path, 'Lyric font');
   return {
     schema: projectSchema,
     version: 1,
@@ -98,7 +102,8 @@ export function validateProject(input, projectPath) {
     importedCdg: value.importedCdg == null ? null : mediaPath(value.importedCdg, 'CD+G source'),
     backgroundPath: value.backgroundPath == null ? null : mediaPath(value.backgroundPath, 'Backdrop'),
     backgroundLoop: value.backgroundLoop !== false,
-    lyricStyle: normalizeLyricStyle(value.lyricStyle),
+    lyricStyle,
+    ...(Object.keys(wordTimingDrafts).length ? { wordTimingDrafts } : {}),
   };
 }
 

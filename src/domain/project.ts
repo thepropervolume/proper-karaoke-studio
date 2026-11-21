@@ -1,5 +1,6 @@
 import type { LyricLine, TimedWord } from '@thepropervolume/karaoke-core';
-import { layoutLyrics, type LyricStyle } from './lyric-style';
+import { layoutLyrics, portableLyricFontPath, type LyricStyle } from './lyric-style';
+import type { WordTimingDrafts } from './manual-timing';
 
 export type { LyricLine, TimedWord } from '@thepropervolume/karaoke-core';
 
@@ -12,6 +13,7 @@ export type StudioProject = {
   schema: 'com.thepropervolume.karaoke-studio'; version: 1; title: string; artist: string;
   durationSeconds: number; stems: Omit<StudioStem, 'file' | 'url'>[]; lyrics: LyricLine[]; importedCdg?: string | null;
   backgroundPath?: string | null; backgroundLoop?: boolean; lyricStyle?: LyricStyle;
+  wordTimingDrafts?: WordTimingDrafts;
 };
 
 export function newLyricLines(text: string, duration: number): LyricLine[] {
@@ -28,7 +30,7 @@ export function seedTimedWords(lines: readonly LyricLine[]): LyricLine[] {
   return lines.map(line => {
     // Keep imported word cues when their text still matches the editable line.
     if (line.words.length && line.words.map(word => word.text).join('') === line.text) return line;
-    const tokens = line.text.match(/\S+\s*/g) ?? [];
+    const tokens = line.text.match(/^\s*\S+\s*|\S+\s*/g) ?? [];
     if (!tokens.length) return { ...line, words: [] };
     const start = Math.max(0, line.startSeconds), end = Math.max(start + 0.05, line.endSeconds);
     const duration = (end - start) / tokens.length;
@@ -111,6 +113,12 @@ function archiveName(sourcePath: string): string {
 // the corresponding entry name that the streaming ZIP writer creates.
 export function toPortableKitProject(project: StudioProject): StudioProject {
   const { backgroundPath, ...portable } = project;
+  const customFont = portable.lyricStyle?.customFont;
+  if (customFont && portable.lyricStyle) {
+    const { customFont: _font, ...style } = portable.lyricStyle;
+    portable.lyricStyle = style.font === 'custom'
+      ? { ...style, customFont: { ...customFont, path: portableLyricFontPath(customFont.path) } } : style;
+  }
   return {
     ...portable,
     stems: project.stems.map((stem, index) => ({
@@ -130,15 +138,15 @@ export function portableBackgroundPath(source: string): string {
 // Adapt editor cues to the Booth canvas renderer so preview and playback share
 // the same drawing path instead of growing a second lyric renderer.
 export function toRenderTiming(lines: readonly LyricLine[], duration: number, style?: LyricStyle) {
-  const { width, height, side, style: palette, entries } = layoutLyrics(lines, duration, style);
+  const { width, height, side, style: palette, entries, bars } = layoutLyrics(lines, duration, style);
   return {
     durationSeconds: Math.max(1, duration), bounds: { x: 0, y: 0, width, height },
-    rightToLeft: false, tracks: [], files: [], countIns: [],
-    pages: entries.map(({ showAt: startSeconds, hideAt: endSeconds, words: syllables, centerY, fontSize }, index) => {
+    rightToLeft: false, tracks: [], files: [], countIns: [], bars,
+    pages: entries.map(({ showAt: startSeconds, hideAt: endSeconds, fade, words: syllables, centerY, fontSize }, index) => {
       const lineHeight = fontSize / .8;
       return {
-        id: index, startSeconds, endSeconds, fadeIn: { startSeconds, durationSeconds: 0 },
-        fadeOut: { startSeconds: endSeconds, durationSeconds: 0 }, activeColor: palette.highlightColor, inactiveColor: palette.textColor,
+        id: index, startSeconds, endSeconds, fadeIn: { startSeconds, durationSeconds: fade },
+        fadeOut: { startSeconds: endSeconds - fade, durationSeconds: fade }, activeColor: palette.highlightColor, inactiveColor: palette.textColor,
         rightToLeft: false, trackId: null, voice: 'Lead',
         lines: [{
           id: index, box: { x: side, y: centerY - lineHeight / 2, width: width - side * 2, height: lineHeight }, leadIn: null,

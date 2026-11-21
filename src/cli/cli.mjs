@@ -109,7 +109,8 @@ async function exportProject(action, args, settings) {
   const destination = path.resolve(requiredOption(args.options, 'output'));
   const file = projectFile(args);
   const project = await loadProject(file);
-  const protectedFiles = [file, settingsFile(args.options), project.backgroundPath, project.importedCdg, ...project.stems.map(stem => stem.path)];
+  const customFontPath = project.lyricStyle?.font === 'custom' ? project.lyricStyle.customFont?.path : undefined;
+  const protectedFiles = [file, settingsFile(args.options), project.backgroundPath, project.importedCdg, customFontPath, ...project.stems.map(stem => stem.path)];
   const resolvedDestination = await realpath(destination).catch(() => destination);
   const samePath = (a, b) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
   for (const input of protectedFiles.filter(Boolean)) {
@@ -132,6 +133,7 @@ async function exportProject(action, args, settings) {
         await operations.exportCdg({
           duration,
           ass: toAss(project.title, project.artist, duration, project.lyrics, 'cdg', project.lyricStyle),
+          customFontPath,
           ffmpegPath: args.options.ffmpeg || settings.ffmpegPath,
         }, destination, overwrite);
       }
@@ -149,6 +151,7 @@ async function exportProject(action, args, settings) {
       backgroundPath: project.backgroundPath,
       backgroundLoop: project.backgroundLoop,
       backgroundColor: project.lyricStyle?.backgroundColor,
+      customFontPath,
       cdgPath: project.lyrics.length ? null : project.importedCdg,
       ffmpegPath: args.options.ffmpeg || settings.ffmpegPath,
       ass: toAss(project.title, project.artist, project.durationSeconds, project.lyrics, 'video', project.lyricStyle),
@@ -161,6 +164,7 @@ async function exportProject(action, args, settings) {
       stems: project.stems,
       cdgPath: project.importedCdg,
       backgroundPath: project.backgroundPath,
+      customFontPath,
     }, destination, overwrite);
   }
   return { output: destination };

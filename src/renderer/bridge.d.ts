@@ -1,6 +1,8 @@
 import type { StudioProject, StudioRole } from '../domain/project';
+import type { CustomLyricFont } from '../domain/lyric-style';
 import type { LyricFormatOptions } from '../domain/lyric-format';
 import type { StudioModelLibrary } from '../domain/model-library';
+import type { StudioShortcuts } from '../domain/studio-shortcuts';
 declare global {
   type SeparatorAdapter = 'audio-separator' | 'demucs' | 'dango' | 'mvsep' | 'gaudio';
   type PreferenceScope = 'session' | 'default';
@@ -19,7 +21,7 @@ declare global {
   type StudioProjectOrigin = { file: string; revision: string };
   type StudioRecoveryDraft = { project: StudioProject; origin: StudioProjectOrigin | null; lyricsDraft: string | null };
   type StudioRecoveryEntry = { id: string; savedAt: number; title: string; artist: string; sourceFile: string | null };
-  type StudioMenuAction = 'open' | 'save' | 'save-as' | 'preferences' | 'appearance' | 'lyrics-style'
+  type StudioMenuAction = 'open' | 'save' | 'save-as' | 'preferences' | 'keybindings' | 'appearance' | 'lyrics-style'
     | 'theme-day' | 'theme-night' | 'accent-blue' | 'accent-pink' | 'accent-purple'
     | 'export-mp4' | 'export-kit' | 'export-cdg' | 'export-cdg-original' | 'export-lrc' | 'export-srt' | 'export-json';
   type StudioMenuState = {
@@ -28,11 +30,20 @@ declare global {
   };
   type StudioBridge = {
     getSettings(): Promise<StudioSettings>;
+    getStudioShortcuts(): Promise<StudioShortcutState>;
+    saveStudioShortcuts(value: StudioShortcuts): Promise<StudioShortcutState>;
+    reloadStudioShortcuts(): Promise<StudioShortcutState>;
+    onStudioShortcutsChanged(listener: (state: StudioShortcutState) => void): () => void;
+    setStudioShortcutRecording(recording: boolean): Promise<void>;
+    getConfigurationFiles(): Promise<Record<StudioConfigurationFile, string>>;
+    revealConfigurationFile(file: StudioConfigurationFile): Promise<void>;
+    openStudioShortcutsFile(): Promise<void>;
+    toggleFullScreen(): Promise<void>;
     getPreferenceDefaults(): Promise<{ saved: StudioSettings; factory: StudioSettings }>;
     saveSettings(settings: StudioSettings, scope: PreferenceScope): Promise<StudioSettings>;
     getModelLibrary(folder: string): Promise<StudioModelLibrary>;
     downloadSeparationModel(id: string): Promise<void>;
-    chooseUvrModelsFolder(): Promise<string | null>;
+    chooseUvrModelsFolder(current?: string): Promise<string | null>;
     openModelsFolder(folder: string): Promise<void>;
     onMenuAction(listener: (action: StudioMenuAction) => void): () => void;
     updateMenu(state: StudioMenuState): Promise<void>;
@@ -58,17 +69,23 @@ declare global {
     saveProject(project: StudioProject, opened?: { file: string; revision: string }): Promise<OpenedStudioProject | null>;
     getPathForFile(file: File): string; registerMedia(filePath: string): Promise<string>;
     registerBackground(filePath: string): Promise<{ url: string; motion: boolean }>;
+    listLyricFonts(): Promise<CustomLyricFont[]>;
+    addLyricFont(): Promise<CustomLyricFont | null>;
+    registerLyricFont(filePath: string): Promise<CustomLyricFont & { url: string }>;
     readCdg(filePath: string): Promise<Uint8Array>;
-    exportCdg(input: { name: string; cdgPath: string } | { name: string; ass: string; duration: number; ffmpegPath: string; backgroundColor?: string }): Promise<string | null>;
+    exportCdg(input: { name: string; cdgPath: string } | { name: string; ass: string; duration: number; ffmpegPath: string; backgroundColor?: string; customFontPath?: string }): Promise<string | null>;
     chooseAudioFiles(): Promise<string[]>; chooseImageFile(): Promise<string | null>;
     armVoiceRecording(): Promise<void>;
     disarmVoiceRecording(): Promise<void>;
     saveVoiceRecording(input: { name: string; wav: Uint8Array }): Promise<string | null>;
     saveText(input: { name: string; extension: string; content: string }): Promise<string | null>;
-    exportKit(input: { name: string; manifest: string; lyrics: Record<string, string>; stems: ExportStem[]; cdgPath?: string | null; backgroundPath?: string | null }): Promise<string | null>;
-    exportVideo(input: { name: string; duration: number; artist: string; title: string; ffmpegPath: string; backgroundPath?: string | null; backgroundLoop?: boolean; backgroundColor?: string; stems: ExportStem[]; ass: string; cdgPath?: string | null }): Promise<string | null>;
+    timingContextMenu(context: 'field' | 'field-with-split' | 'line'): Promise<'playhead' | 'split-words' | null>;
+    exportKit(input: { name: string; manifest: string; lyrics: Record<string, string>; stems: ExportStem[]; cdgPath?: string | null; backgroundPath?: string | null; customFontPath?: string }): Promise<string | null>;
+    exportVideo(input: { name: string; duration: number; artist: string; title: string; ffmpegPath: string; backgroundPath?: string | null; backgroundLoop?: boolean; backgroundColor?: string; stems: ExportStem[]; ass: string; cdgPath?: string | null; customFontPath?: string }): Promise<string | null>;
     separate(input: { sourcePath: string }): Promise<{ files: string[]; outputDirectory: string; roles?: Record<string, StudioRole> }>;
     alignLyrics(input: { audioPath: string; language: string; lyrics: string[] }): Promise<{ duration: number; words: { word: string; start: number; end: number }[] }>;
   };
+  type StudioShortcutState = { value: StudioShortcuts; warning: string };
+  type StudioConfigurationFile = 'settings' | 'shortcuts';
   interface Window { studio: StudioBridge; }
 }

@@ -16,8 +16,12 @@ const { createIntegrationCatalog } = require('./integration-catalog.cjs');
 const { createIntegrationSecrets } = require('./integration-secrets.cjs');
 const { checkDangoConnection, normalizeDangoCredentials, separateWithDango } = require('./dango-separator.cjs');
 const { createStudioMenu } = require('./studio-menu.cjs');
+const { timingContextMenu } = require('./timing-context-menu.cjs');
 const { createSessionPreferences } = require('./session-preferences.cjs');
+const { createStudioShortcuts, ensureJsonFile } = require('./studio-shortcuts.cjs');
+const { bindingFromStudioKey } = require('../domain/studio-shortcuts.ts');
 const { createModelLibrary } = require('./model-library.cjs');
+const { createFontLibrary, describeLyricFont } = require('./lyric-fonts.cjs');
 const { cloudSeparators } = require('./cloud-separators.cjs');
 
 // Files are served to the renderer through random one-session URLs, never file:// URLs.
@@ -31,6 +35,8 @@ const gifPreviews = new Map();
 let gifDirectory;
 let mainWindow;
 let updateStudioMenu;
+let shortcuts;
+let recordingShortcut = false;
 let recovery;
 let quitting = false;
 let microphoneExpiresAt = 0;
@@ -142,6 +148,20 @@ function configurePermissions(session) {
 }
 
 function settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
+function shortcutsPath() { return path.join(app.getPath('userData'), 'keybindings.json'); }
+
+function bindStudioShortcuts(window) {
+  recordingShortcut = false;
+  window.webContents.on('before-input-event', (_event, input) => {
+    if (input.type !== 'keyDown') return;
+    const binding = bindingFromStudioKey(input);
+    // Native menu equivalents would intercept a remapped chord before React can
+    // preserve normal text editing or route it to the active timing session.
+    const assigned = binding && Object.values(shortcuts.get().value).some(keys => keys.includes(binding));
+    window.webContents.setIgnoreMenuShortcuts(recordingShortcut || Boolean(assigned));
+  });
+  window.on('blur', () => { window.webContents.setIgnoreMenuShortcuts(false); });
+}
 function brandIcon() {
   const root = app.isPackaged
     ? path.join(process.resourcesPath, 'branding')
@@ -162,6 +182,7 @@ function createWindow() {
   });
   const window = mainWindow;
   updateStudioMenu = createStudioMenu(window);
+  bindStudioShortcuts(window);
   microphoneExpiresAt = 0;
   configurePermissions(window.webContents.session);
   let closing = false;
@@ -191,14 +212,51 @@ app.whenReady().then(() => {
   handleEditor('studio:update-menu', (_event, state) => updateStudioMenu(state ?? {}));
   protocol.handle('studio-media', request => serveStudioMedia(request, media.get(new URL(request.url).hostname)));
   const preferences = createSessionPreferences(settingsPath());
+  shortcuts = createStudioShortcuts(shortcutsPath());
+  const publishShortcuts = (event, state) => {
+    event.sender.send('studio:shortcuts-changed', state);
+    return state;
+  };
+  handleEditor('studio:get-shortcuts', () => shortcuts.get());
+  handleEditor('studio:save-shortcuts', (event, value) => publishShortcuts(event, shortcuts.save(value)));
+  handleEditor('studio:reload-shortcuts', event => publishShortcuts(event, shortcuts.reload()));
+  handleEditor('studio:record-shortcut', (_event, value) => { recordingShortcut = value === true; });
+  handleEditor('studio:configuration-files', () => ({ settings: settingsPath(), shortcuts: shortcutsPath() }));
+  handleEditor('studio:reveal-configuration-file', (_event, kind) => {
+    if (kind === 'settings') {
+      ensureJsonFile(settingsPath(), preferences.defaults().saved);
+      shell.showItemInFolder(settingsPath());
+    } else if (kind === 'shortcuts') {
+      shortcuts.ensureFile();
+      shell.showItemInFolder(shortcutsPath());
+    } else throw new Error('Choose a Studio configuration file.');
+  });
+  handleEditor('studio:open-shortcuts-file', async () => {
+    shortcuts.ensureFile();
+    const failure = await shell.openPath(shortcutsPath());
+    if (failure) throw new Error('Studio could not open the keyboard shortcuts file.');
+  });
+  handleEditor('studio:toggle-full-screen', () => mainWindow.setFullScreen(!mainWindow.isFullScreen()));
   const models = createModelLibrary(path.join(app.getPath('userData'), 'models'));
+  const fonts = createFontLibrary(path.join(app.getPath('userData'), 'lyric-fonts'));
+  handleEditor('studio:list-lyric-fonts', () => fonts.list());
+  handleEditor('studio:add-lyric-font', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, { title: 'Add Lyric Font File', properties: ['openFile'],
+      filters: [{ name: 'Font Files', extensions: ['ttf', 'otf'] }] });
+    return result.canceled || !result.filePaths[0] ? null : fonts.add(result.filePaths[0]);
+  });
+  handleEditor('studio:register-lyric-font', async (_event, file) => {
+    const font = await describeLyricFont(file);
+    return { ...font, url: mediaUrl(font.path) };
+  });
   handleEditor('studio:get-settings', () => preferences.get());
   handleEditor('studio:preference-defaults', () => preferences.defaults());
   handleEditor('studio:save-settings', (_event, input) => preferences.save(input?.value, input?.scope));
   handleEditor('studio:model-library', (_event, folder) => models.inventory(folder));
   handleEditor('studio:download-model', (_event, id) => models.download(id));
-  handleEditor('studio:choose-models-folder', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, { title: 'Choose UVR Models Folder', properties: ['openDirectory'] });
+  handleEditor('studio:choose-models-folder', async (_event, folder) => {
+    const defaultPath = typeof folder === 'string' && folder ? await models.directory(folder).catch(() => undefined) : undefined;
+    const result = await dialog.showOpenDialog(mainWindow, { title: 'Choose UVR Installation or Models Folder', defaultPath, properties: ['openDirectory'] });
     return result.canceled || !result.filePaths[0] ? null : models.directory(result.filePaths[0]);
   });
   handleEditor('studio:open-models-folder', async (_event, folder) => {
@@ -249,6 +307,7 @@ app.whenReady().then(() => {
     return mediaUrl(await localFile(value, new Set([...AUDIO_EXTENSIONS, ...BACKGROUND_EXTENSIONS])));
   });
   handleEditor('studio:register-backdrop', (_event, file) => registerBackdrop(file, preferences.get().ffmpegPath));
+  handleEditor('studio:timing-context-menu', (_event, context) => timingContextMenu(mainWindow, context));
   ipcMain.handle('studio:read-cdg', (_event, value) => readCdg(value));
   ipcMain.handle('studio:export-cdg', async (_event, input) => {
     const destination = await chooseSave(text(input.name, 'CD+G name', 180) + '.cdg', 'CD+G Graphics', 'cdg');

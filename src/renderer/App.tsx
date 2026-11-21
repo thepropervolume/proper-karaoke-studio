@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
 import { KaraFunPlayer as KaraokePlayer, type KaraFunPlayerEvent as KaraokePlayerEvent, type KaraFunStemSource as KaraokeStemSource } from '../shared/from-booth/display/karafun-player';
 import { paintKaraFunLyrics } from '../shared/from-booth/display/karafun-lyrics';
-import { finishTimedWord, newLyricLines, recordTimedWordStart, seedTimedWords, timedWordCount, toPortableKitProject, toRenderTiming, type LyricLine, type StudioProject, type StudioRole, type StudioStem } from '../domain/project';
+import { newLyricLines, toPortableKitProject, toRenderTiming, type LyricLine, type StudioProject, type StudioRole, type StudioStem } from '../domain/project';
+import { completeTimingSession, completedDraftWords, lyricWordTokens, normalizeWordTimingDrafts, recordTimingTap, splitLineWords, startTimingSession,
+  stepTimingHistory, timingPosition, type CaptureMode, type TimingField, type TimingSession, type WordTimingDrafts } from '../domain/manual-timing';
 import { parseLyricsFile, toAss, toLrc, toLyricsJson, toSrt } from '../domain/lyrics-formats';
 import { formatLyricText, MAXIMUM_LYRIC_TEXT_BYTES, readLyricVersions, type LyricFormatOptions, type LyricVersion } from '../domain/lyric-format';
 import { applyForcedAlignment } from '../domain/forced-alignment';
 import { defaultLyricStyle, lyricFonts, normalizeLyricStyle } from '../domain/lyric-style';
 import { DEFAULT_LYRIC_FORMAT_OPTIONS } from '../domain/lyric-format';
+import { studioShortcutForEvent, studioShortcutHint, type StudioShortcutAction } from '../domain/studio-shortcuts';
 import { CdgPlayer, cdgByteLimit } from '../domain/cdg';
 import { CdgPreview } from './CdgPreview';
 import { WaveformTimeline } from './WaveformTimeline';
@@ -14,7 +17,9 @@ import { StudioIcon, type StudioIconName } from './StudioIcon';
 import { WorkspaceSeparator, defaultInspectorWidth, inspectorMax, minInspectorWidth } from './WorkspaceSeparator';
 import { VoiceRecorder } from './VoiceRecorder';
 import { PreferencesDialog, preferenceError } from './PreferencesDialog';
+import { useStudioShortcuts } from './useStudioShortcuts';
 import { LyricAppearance } from './LyricAppearance';
+import { paintStudioBars } from './lyric-bars';
 import { BackdropPreview } from './BackdropPreview';
 import { LyricFormatFields } from './LyricFormatFields';
 import { version } from '../../package.json';
@@ -96,7 +101,7 @@ async function mediaDuration(url: string): Promise<number> {
 
 export function App() {
   const player = useRef<KaraokePlayer | null>(null), generation = useRef('');
-  const timingRef = useRef(false), captureAction = useRef<() => void>(() => undefined);
+  const timingSessionRef = useRef<TimingSession | null>(null);
   const linesRef = useRef<LyricLine[]>([]);
   const canvas = useRef<HTMLCanvasElement | null>(null), stemRef = useRef<StudioStem[]>([]);
   const [stems, setStems] = useState<StudioStem[]>([]);
@@ -108,6 +113,7 @@ export function App() {
   const [lyricAppearanceOpen, setLyricAppearanceOpen] = useState(false);
   const [lyricStyle, setLyricStyle] = useState(defaultLyricStyle);
   const [fontReady, setFontReady] = useState(0);
+  const [loadedCustomFont, setLoadedCustomFont] = useState('');
   const [draftOpen, setDraftOpen] = useState(true);
   const inspectorMaximum = inspectorMax(viewportWidth);
   const inspectorWidth = Math.min(inspectorMaximum, storedInspectorWidth);
@@ -117,11 +123,18 @@ export function App() {
   const [position, setPosition] = useState(0), [duration, setDuration] = useState(0);
   const [waveform, setWaveform] = useState<{ peaks: Float32Array; duration: number } | null>(null);
   const [playing, setPlaying] = useState(false), [volume, setVolume] = useState(0.8);
-  const [lyricsDraft, setLyricsDraft] = useState(''), [nextLine, setNextLine] = useState(0), [nextWord, setNextWord] = useState(0), [captureMode, setCaptureMode] = useState<'line' | 'word'>('line'), [timing, setTiming] = useState(false);
+  const [lyricsDraft, setLyricsDraft] = useState('');
+  const [timingSession, setTimingSession] = useState<TimingSession | null>(null);
+  const timing = timingSession !== null;
+  const timingTarget = timingSession?.targets[timingSession.cursor];
+  const [wordTimingDrafts, setWordTimingDrafts] = useState<WordTimingDrafts>({});
+  const [selectedCueId, setSelectedCueId] = useState<string>();
+  const [expandedWordCues, setExpandedWordCues] = useState<Set<string>>(() => new Set());
   const [draftPending, setDraftPending] = useState(false);
   const [lyricFormatOverride, setLyricFormatOverride] = useState<LyricFormatOptions | null>(null);
   const [lyricVersions, setLyricVersions] = useState<{ name: string; items: LyricVersion[] } | null>(null);
   const lyricFileRequest = useRef(0);
+  const lyricPicker = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState('Create a project by importing audio stems.');
   const [error, setError] = useState('');
   const [settings, setSettings] = useState<StudioSettings>({
@@ -131,6 +144,8 @@ export function App() {
   });
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false), [busy, setBusy] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<'shortcuts'>();
+  const [shortcuts, saveShortcuts] = useStudioShortcuts();
   const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
   const [cdgPath, setCdgPath] = useState<string | null>(null);
   const [decodedCdg, setDecodedCdg] = useState<CdgPlayer | null>(null);
@@ -188,29 +203,42 @@ export function App() {
   const cdgPlayer = lines.length ? null : decodedCdg;
   const previewDuration = duration || cdgPlayer?.durationSeconds || 0;
   const livePosition = useCallback(() => player.current?.snapshot()?.position, []);
-  const wordCount = useMemo(() => timedWordCount(lines), [lines]);
-  const wordOffsets = useMemo(() => {
-    let offset = 0;
-    return lines.map(line => { const current = offset; offset += line.words.length; return current; });
-  }, [lines]);
+  const customFontPath = lyricStyle.font === 'custom' ? lyricStyle.customFont?.path : undefined;
+  const builtinFont = lyricFonts[lyricStyle.font === 'custom' ? 'sans' : lyricStyle.font].family;
+  const previewFont = customFontPath && loadedCustomFont === customFontPath ? 'Studio Project Font' : builtinFont;
   useEffect(() => {
     let current = true;
-    void document.fonts.load(`700 24px "${lyricFonts[lyricStyle.font].family}"`)
-      .then(() => { if (current) setFontReady(value => value + 1); }).catch(() => {});
-    return () => { current = false; };
-  }, [lyricStyle.font]);
+    let registered: FontFace | undefined;
+    if (customFontPath) {
+      void window.studio.registerLyricFont(customFontPath).then(async ({ url }) => {
+        const face = await new FontFace('Studio Project Font', 'url("' + url + '")', { weight: '700' }).load();
+        if (!current) return;
+        document.fonts.add(face);
+        registered = face;
+        setLoadedCustomFont(customFontPath);
+        setFontReady(value => value + 1);
+      }).catch(cause => { if (current) setError('Custom font preview unavailable. ' + preferenceError(cause)); });
+    } else {
+      void document.fonts.load(`700 24px "${builtinFont}"`)
+        .then(() => { if (current) setFontReady(value => value + 1); }).catch(() => {});
+    }
+    return () => { current = false; if (registered) document.fonts.delete(registered); };
+  }, [builtinFont, customFontPath]);
   useEffect(() => {
     const paint = () => {
-      if (canvas.current) paintKaraFunLyrics(canvas.current, renderTiming, position, {
-        fontFamily: '"' + lyricFonts[lyricStyle.font].family + '", sans-serif',
+      const layer = canvas.current;
+      if (!layer) return;
+      paintKaraFunLyrics(layer, renderTiming, position, {
+        fontFamily: '"' + previewFont + '", sans-serif',
         primarySingerColor: lyricStyle.highlightColor, outlineColor: lyricStyle.outlineColor,
       });
+      paintStudioBars(layer, renderTiming.bars, position);
     };
     paint();
     const observer = new ResizeObserver(paint);
     if (canvas.current) observer.observe(canvas.current);
     return () => observer.disconnect();
-  }, [renderTiming, position, lyricStyle, fontReady]);
+  }, [renderTiming, position, previewFont, lyricStyle, fontReady]);
 
   const loadStems = useCallback(async (next: StudioStem[], projectDuration?: number) => {
     player.current?.stop();
@@ -278,6 +306,9 @@ export function App() {
     setTitle(project.title);
     setArtist(project.artist);
     setLines(project.lyrics);
+    setWordTimingDrafts(project.wordTimingDrafts ?? {});
+    setSelectedCueId(undefined);
+    setExpandedWordCues(new Set());
     setLyricFormatOverride(null);
     setLyricVersions(null);
     setLyricStyle(normalizeLyricStyle(project.lyricStyle));
@@ -285,7 +316,8 @@ export function App() {
     setDraftPending(draft !== null);
     setWorkspace(project.lyrics.length || project.importedCdg || draft ? 'lyrics' : 'audio');
     setDraftOpen(!project.lyrics.length || draft !== null);
-    setNextLine(0); setNextWord(0); setTiming(false);
+    timingSessionRef.current = null;
+    setTimingSession(null);
     setCdgPath(source);
     setDecodedCdg(graphics);
     setBackground(image);
@@ -400,7 +432,13 @@ export function App() {
       if (id === generation.current) await preview.play(id);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
-  const seek = (next: number) => { if (generation.current) void player.current?.seek(generation.current, next); setPosition(next); };
+  const seek = (next: number) => {
+    if (!Number.isFinite(next)) return;
+    const time = Math.min(Math.max(0, next), previewDuration);
+    if (generation.current) void player.current?.seek(generation.current, time);
+    setPosition(time);
+  };
+  const skip = (delta: number) => seek((livePosition() ?? position) + delta);
   const moveCue = (id: string, start: number) => setLines(current => current.map(line => {
     if (line.id !== id) return line;
     const earliest = Math.min(line.startSeconds, ...line.words.map(word => word.startSeconds));
@@ -440,23 +478,40 @@ export function App() {
       return;
     }
     if (lines.length && !window.confirm('Replace the cue sheet with this draft? Existing timings will need to be synced again.')) return;
-    setLines(newLyricLines(lyricsDraft, duration || 240)); setNextLine(0); setNextWord(0); setTiming(false);
+    setLines(newLyricLines(lyricsDraft, duration || 240));
+    setWordTimingDrafts({});
+    setSelectedCueId(undefined);
     setDraftPending(false);
     setDraftOpen(false);
     setStatus('Lyrics added. Start playback and tap each line as it is sung.');
   };
-  const beginTiming = async () => {
-    if (!lines.length || !generation.current) { setError('Add lyrics and audio first.'); return; }
-    setCaptureMode('line'); setNextLine(0); setTiming(true); seek(0);
-    try { await player.current?.play(generation.current); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  const currentPlayhead = () => timingPosition(livePosition() ?? position);
+  const showTimingSession = (session: TimingSession | null) => {
+    timingSessionRef.current = session;
+    setTimingSession(session);
+    if (session) setLines(session.frames[session.cursor].lines);
   };
-  const beginWordTiming = async () => {
-    if (!lines.length || !generation.current) { setError('Add lyrics and audio first.'); return; }
-    const prepared = seedTimedWords(lines);
-    setLines(prepared); setCaptureMode('word'); setNextWord(0); setTiming(true); seek(0);
-    try { await player.current?.play(generation.current); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  const beginTiming = async (mode: CaptureMode) => {
+    const preview = player.current;
+    const snapshot = preview?.snapshot();
+    if (timingSessionRef.current || busy || !preview || !snapshot?.ready || snapshot.generation !== generation.current || !lines.length) return;
+    const session = startTimingSession(mode, lines, currentPlayhead());
+    if (!session) {
+      setError('Move the playhead to a lyric cue before starting timing.');
+      return;
+    }
+    setError('');
+    lyricFileRequest.current++;
+    showTimingSession(session);
+    try {
+      if (!(await preview.play(snapshot.generation)) && timingSessionRef.current === session) {
+        showTimingSession(null);
+        setError('Timing requires playable audio. Check the selected audio and try again.');
+      }
+    } catch (cause) {
+      if (timingSessionRef.current === session) showTimingSession(null);
+      setError(preferenceError(cause));
+    }
   };
   const alignLyrics = async () => {
     const source = stems.find(stem => stem.id === alignmentStemId);
@@ -473,6 +528,7 @@ export function App() {
       if (JSON.stringify(linesRef.current) !== lyricsAtStart) throw new Error('The lyric cues changed while synchronization was running. The new timings were discarded; run synchronization again.');
       const alignedLines = applyForcedAlignment(lines, result.words, Math.max(duration, result.duration));
       setLines(alignedLines);
+      setWordTimingDrafts({});
       setDuration(Math.max(duration, result.duration));
       setStatus(`Synchronized ${result.words.length} supplied lyric words. Review the cues and adjust any mismatches.`);
     } catch (cause) {
@@ -480,36 +536,75 @@ export function App() {
       setStatus('Lyric synchronization did not finish. Existing lyric text and timing were kept.');
     } finally { stopProgress(); setBusy(false); }
   };
-  const tapLine = () => {
-    if (nextLine >= lines.length) return;
-    const at = position, indexToMark = nextLine;
-    setLines(current => current.map((line, index) => {
-      if (index === indexToMark) return { ...line, startSeconds: at, endSeconds: Math.max(at + 0.1, line.endSeconds) };
-      if (index === indexToMark - 1) return { ...line, endSeconds: Math.max(at, line.startSeconds) };
-      return line;
-    }));
-    setNextLine(index => index + 1);
+  const tapTiming = () => {
+    const session = timingSessionRef.current;
+    if (!session || !session.targets[session.cursor]) return;
+    const next = recordTimingTap(session, currentPlayhead());
+    if (next === session) {
+      setStatus('Move the playhead past the last tap, or undo it to try again.');
+      return;
+    }
+    showTimingSession(next);
+    setStatus(next.cursor === next.targets.length ? 'All remaining cues captured. Finish timing when ready.' : 'Timing capture in progress.');
   };
-  const finishTiming = () => {
-    if (captureMode === 'word' && nextWord > 0) setLines(current => finishTimedWord(current, nextWord - 1, position));
-    const last = Math.max(0, nextLine - 1);
-    if (captureMode === 'line') setLines(current => current.map((line, index) => index === last ? { ...line, endSeconds: Math.max(position, line.startSeconds + 0.1) } : line));
+  const changeTimingHistory = (delta: -1 | 1) => {
+    const session = timingSessionRef.current;
+    if (!session) return;
+    const next = stepTimingHistory(session, delta);
+    if (next !== session) {
+      showTimingSession(next);
+      setStatus(delta < 0 ? 'Last timing tap undone.' : 'Timing tap restored.');
+    }
+  };
+  const undoTiming = () => changeTimingHistory(-1);
+  const redoTiming = () => changeTimingHistory(1);
+  const endTiming = (keepChanges: boolean) => {
+    const session = timingSessionRef.current;
+    if (!session) return;
+    const next = keepChanges ? completeTimingSession(session, currentPlayhead()) : session.frames[0].lines;
+    setLines(next);
+    if (keepChanges) setWordTimingDrafts(current => normalizeWordTimingDrafts(current, next));
     if (generation.current) player.current?.pause(generation.current);
     setPlaying(false);
-    setTiming(false); setStatus('Lyric timing saved.');
+    showTimingSession(null);
+    setStatus(keepChanges ? 'Lyric timing saved.' : 'Timing canceled. Previous cues restored.');
   };
-  const tapWord = () => {
-    if (nextWord >= wordCount) return;
-    setLines(current => recordTimedWordStart(current, nextWord, position));
-    setNextWord(index => index + 1);
+  const finishTiming = () => endTiming(true);
+  const cancelTiming = () => endTiming(false);
+  const setWordsOpen = (lineId: string, open: boolean) => {
+    setExpandedWordCues(current => {
+      if (current.has(lineId) === open) return current;
+      const next = new Set(current);
+      if (open) next.add(lineId);
+      else next.delete(lineId);
+      return next;
+    });
   };
-  const updateLine = (id: string, patch: Partial<LyricLine>) => setLines(current => current.map(line => {
-    if (line.id !== id) return line;
-    const startSeconds = Number.isFinite(patch.startSeconds) ? Math.max(0, patch.startSeconds!) : line.startSeconds;
-    const endSeconds = Math.max(startSeconds, Number.isFinite(patch.endSeconds) ? patch.endSeconds! : line.endSeconds);
-    // Text edits invalidate word-level timing so it cannot silently describe old text.
-    return { ...line, ...patch, startSeconds, endSeconds, ...(patch.text !== undefined && patch.text !== line.text ? { words: [] } : {}) };
-  }));
+  const splitCue = (lineId: string) => {
+    if (timingSessionRef.current || busy || Object.hasOwn(wordTimingDrafts, lineId)) return;
+    const index = lines.findIndex(line => line.id === lineId);
+    if (index < 0 || lines[index].words.length || !lines[index].text.trim()) return;
+    const { words, draft } = splitLineWords(lines, index);
+    if (draft.length) setWordTimingDrafts(current => ({ ...current, [lineId]: draft }));
+    else {
+      setLines(current => current.map(line => line.id === lineId
+        ? { ...line, words, startSeconds: words[0].startSeconds, endSeconds: words.at(-1)!.endSeconds } : line));
+    }
+    setSelectedCueId(lineId); setWordsOpen(lineId, true);
+    setStatus(draft.length ? 'Word timings are blank. Enter a start and end for each word.' : 'Created evenly spaced word timings.');
+  };
+  const updateLine = (id: string, patch: Partial<LyricLine>) => {
+    if (patch.text !== undefined && Object.hasOwn(wordTimingDrafts, id)) {
+      setWordTimingDrafts(current => Object.fromEntries(Object.entries(current).filter(([lineId]) => lineId !== id)));
+    }
+    setLines(current => current.map(line => {
+      if (line.id !== id) return line;
+      const startSeconds = Number.isFinite(patch.startSeconds) ? Math.max(0, patch.startSeconds!) : line.startSeconds;
+      const endSeconds = Math.max(startSeconds, Number.isFinite(patch.endSeconds) ? patch.endSeconds! : line.endSeconds);
+      // Text edits invalidate word-level timings for the old text.
+      return { ...line, ...patch, startSeconds, endSeconds, ...(patch.text !== undefined && patch.text !== line.text ? { words: [] } : {}) };
+    }));
+  };
   const updateWord = (lineId: string, wordIndex: number, field: 'startSeconds' | 'endSeconds', value: number) => {
     if (!Number.isFinite(value)) return;
     setLines(current => current.map(line => {
@@ -521,19 +616,27 @@ export function App() {
       return { ...line, words, startSeconds: Math.min(...words.map(item => item.startSeconds)), endSeconds: Math.max(...words.map(item => item.endSeconds)) };
     }));
   };
-  const handleCaptureKey = useCallback((event: globalThis.KeyboardEvent) => {
-    if (!timingRef.current || event.code !== 'Space') return;
-    const target = event.target as HTMLElement;
-    if (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
-    event.preventDefault();
-    captureAction.current();
-  }, []);
-  timingRef.current = timing;
-  captureAction.current = captureMode === 'word' ? tapWord : tapLine;
-  useEffect(() => {
-    window.addEventListener('keydown', handleCaptureKey);
-    return () => window.removeEventListener('keydown', handleCaptureKey);
-  }, [handleCaptureKey]);
+  const updateDraftWord = (line: LyricLine, wordIndex: number, field: TimingField, value: number | undefined) => {
+    const current = wordTimingDrafts[line.id];
+    if (!current?.[wordIndex]) return;
+    const draft = current.map((word, index) => index === wordIndex ? { ...word, [field]: value } : word);
+    const completed = completedDraftWords(line.text, draft);
+    if (completed) {
+      updateLine(line.id, { words: completed, startSeconds: Math.min(...completed.map(word => word.startSeconds)),
+        endSeconds: Math.max(...completed.map(word => word.endSeconds)) });
+      setWordTimingDrafts(current => Object.fromEntries(Object.entries(current).filter(([id]) => id !== line.id)));
+    } else setWordTimingDrafts(current => ({ ...current, [line.id]: draft }));
+  };
+  const timingFieldMenu = async (event: MouseEvent<HTMLInputElement>, update: (position: number) => void, split?: () => void) => {
+    event.preventDefault(); event.stopPropagation();
+    if (timingSessionRef.current || busy) return;
+    event.currentTarget.focus({ preventScroll: true });
+    try {
+      const action = await window.studio.timingContextMenu(split ? 'field-with-split' : 'field');
+      if (action === 'playhead') update(currentPlayhead());
+      else if (action === 'split-words') split?.();
+    } catch (cause) { setError(preferenceError(cause)); }
+  };
   const useLyricVersion = (version: LyricVersion, name: string) => {
     setLyricVersions(null);
     setLyricText(version.text);
@@ -580,15 +683,18 @@ export function App() {
         const cues = newLyricLines(contents, duration || 240);
         if (!cues.length) throw new Error('The text file contains no lyrics.');
         setLines(cues);
+        setWordTimingDrafts({});
+        setSelectedCueId(undefined);
         setLyricsDraft(contents.replace(/\r\n?/g, '\n'));
         setDraftPending(false);
         setDraftOpen(true);
-        setNextLine(0); setNextWord(0); setTiming(false);
         setStatus('Imported ' + cues.length + ' lines from ' + file.name + '.');
         return;
       }
       const imported = parseLyricsFile(file.name, contents);
       setLines(imported.lines);
+      setWordTimingDrafts({});
+      setSelectedCueId(undefined);
       if (imported.title) setTitle(imported.title);
       if (imported.artist) setArtist(imported.artist);
       setLyricsDraft(imported.lines.map(line => line.text).join('\n'));
@@ -631,11 +737,16 @@ export function App() {
     finally { setBusy(false); }
   };
 
-  const currentProject = useMemo<StudioProject>(() => ({
-    schema: 'com.thepropervolume.karaoke-studio', version: 1, title, artist, durationSeconds: duration,
-    stems: stems.map(({ file: _file, url: _url, ...stem }) => stem), lyrics: lines, importedCdg: cdgPath, backgroundPath: background?.path ?? null,
-    backgroundLoop, lyricStyle,
-  }), [title, artist, duration, stems, lines, cdgPath, background?.path, backgroundLoop, lyricStyle]);
+  // Timing captures stay reversible until Finish Timing. Recovery keeps the original cues until then.
+  const projectLines = timingSession?.frames[0].lines ?? lines;
+  const currentProject = useMemo<StudioProject>(() => {
+    const drafts = normalizeWordTimingDrafts(wordTimingDrafts, projectLines);
+    return {
+      schema: 'com.thepropervolume.karaoke-studio', version: 1, title, artist, durationSeconds: duration,
+      stems: stems.map(({ file: _file, url: _url, ...stem }) => stem), lyrics: projectLines, importedCdg: cdgPath, backgroundPath: background?.path ?? null,
+      backgroundLoop, lyricStyle, ...(Object.keys(drafts).length ? { wordTimingDrafts: drafts } : {}),
+    };
+  }, [title, artist, duration, stems, projectLines, cdgPath, background?.path, backgroundLoop, lyricStyle, wordTimingDrafts]);
   const projectChanged = useMemo(() => openedProject ? openedProject.snapshot !== JSON.stringify(currentProject)
     : Boolean(stems.length || lines.length || background || cdgPath || title || artist || JSON.stringify(lyricStyle) !== JSON.stringify(defaultLyricStyle)),
   [openedProject, currentProject, stems.length, lines.length, background, cdgPath, title, artist, lyricStyle]);
@@ -714,7 +825,7 @@ export function App() {
         name: safeName(title), manifest: JSON.stringify(kitProject, null, 2),
         lyrics: { 'lyrics.json': toLyricsJson(title, artist, duration, lines), 'lyrics.enhanced.lrc': toLrc(title, artist, lines), 'lyrics.srt': toSrt(lines) },
         stems: stems.map(stem => ({ path: stem.path, name: stem.name, role: stem.role, voice: stem.voice, volume: stem.volume })),
-        cdgPath, backgroundPath: background?.path,
+        cdgPath, backgroundPath: background?.path, customFontPath,
       });
       if (saved) setStatus('Exported TPV kit: ' + saved.split(/[\\/]/).at(-1) + '.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
@@ -726,7 +837,7 @@ export function App() {
     try {
       const saved = await window.studio.exportVideo({
         name: safeName(title), duration, artist, title, ffmpegPath: settings.ffmpegPath,
-        backgroundPath: background?.path, backgroundLoop, backgroundColor: lyricStyle.backgroundColor,
+        backgroundPath: background?.path, backgroundLoop, backgroundColor: lyricStyle.backgroundColor, customFontPath,
         cdgPath: lines.length ? null : cdgPath,
         stems: stems.map(stem => ({ path: stem.path, name: stem.name, role: stem.role, voice: stem.voice, volume: stem.volume })),
         ass: toAss(title, artist, duration, lines, 'video', lyricStyle),
@@ -743,7 +854,7 @@ export function App() {
       const exportDuration = duration || lines.reduce((end, line) => Math.max(end, line.endSeconds), 0);
       const saved = await window.studio.exportCdg(original && cdgPath ? { name, cdgPath }
         : { name, duration: exportDuration, ass: toAss(title, artist, exportDuration, lines, 'cdg', lyricStyle),
-          backgroundColor: lyricStyle.backgroundColor, ffmpegPath: settings.ffmpegPath });
+          backgroundColor: lyricStyle.backgroundColor, customFontPath, ffmpegPath: settings.ffmpegPath });
       if (saved) setStatus('Exported CD+G graphics: ' + basename(saved) + '.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
@@ -752,6 +863,13 @@ export function App() {
   const editorInert = projectTransition || recoveryOpen || voiceRecorderOpen || settingsOpen || appearanceOpen || lyricAppearanceOpen;
   const menuEnabled = !editorInert && !busy && !timing;
   const hasStems = stems.length > 0, hasLyrics = lines.length > 0, hasCdg = Boolean(cdgPath), canStyle = !cdgPlayer;
+  const openPreferences = (section?: 'shortcuts') => { setSettingsSection(section); setSettingsOpen(true); };
+  const pickAudio = () => { void window.studio.chooseAudioFiles().then(addLocalPaths).catch(cause => setError(preferenceError(cause))); };
+  const pickLyrics = () => { setWorkspace('lyrics'); lyricPicker.current?.click(); };
+  const shortcutHint = (label: string, action: StudioShortcutAction) => {
+    const hint = studioShortcutHint(shortcuts, action);
+    return hint ? `${label} (${hint})` : label;
+  };
   const menuAction = useRef<(action: StudioMenuAction) => void>(() => {});
   menuAction.current = action => {
     if (!menuEnabled) return;
@@ -759,7 +877,8 @@ export function App() {
       case 'open': void openProject(); break;
       case 'save': void saveProject(); break;
       case 'save-as': void saveProject(true); break;
-      case 'preferences': setSettingsOpen(true); break;
+      case 'preferences': openPreferences(); break;
+      case 'keybindings': openPreferences('shortcuts'); break;
       case 'appearance': setAppearanceOpen(true); break;
       case 'lyrics-style': if (canStyle) setLyricAppearanceOpen(true); break;
       case 'theme-day': setAppearance(current => ({ ...current, theme: 'day' })); break;
@@ -781,44 +900,58 @@ export function App() {
     void window.studio.updateMenu({ editing: menuEnabled, stems: hasStems, lyrics: hasLyrics, cdg: hasCdg, styling: canStyle,
       theme: appearance.theme, accent: appearance.accent }).catch(() => { /* Toolbar actions remain available. */ });
   }, [menuEnabled, hasStems, hasLyrics, hasCdg, canStyle, appearance.theme, appearance.accent]);
-  const shortcutActions = useRef({ open: () => {}, save: (_as: boolean) => {}, play: () => {}, preferences: () => {}, enabled: false });
-  shortcutActions.current = {
-    open: () => { void openProject(); },
-    save: as => { void saveProject(as); },
-    play: () => { void togglePlay(); },
-    preferences: () => setSettingsOpen(true),
-    enabled: menuEnabled,
+  const handleShortcut = useRef<(event: KeyboardEvent) => void>(() => {});
+  handleShortcut.current = event => {
+    if (editorInert || busy) return;
+    const action = studioShortcutForEvent(shortcuts, event, timing);
+    if (!action) return;
+    event.preventDefault();
+    switch (action) {
+      case 'open': case 'save': case 'save-as': case 'preferences': case 'keybindings':
+      case 'appearance': case 'lyrics-style': case 'export-mp4': case 'export-kit': case 'export-cdg': case 'export-lrc':
+        menuAction.current(action); break;
+      case 'play-pause': if (stems.some(stem => stem.url)) void togglePlay(); break;
+      case 'restart': if (previewDuration) seek(0); break;
+      case 'skip-backward': if (previewDuration) skip(-5); break;
+      case 'skip-forward': if (previewDuration) skip(10); break;
+      case 'import-audio': pickAudio(); break;
+      case 'import-lyrics': pickLyrics(); break;
+      case 'choose-background': if (canStyle) void chooseBackground(); break;
+      case 'format-lyrics': if ((lyricsDraft.trim() || cueText) && !lyricVersions) formatLyrics(); break;
+      case 'build-cues': if (lyricsDraft.trim() && !lyricVersions) makeLines(); break;
+      case 'align-lyrics': if (hasLyrics && alignmentStemId) void alignLyrics(); break;
+      case 'time-lines': if (canStartTiming) void beginTiming('line'); break;
+      case 'time-words': if (canStartTiming) void beginTiming('word'); break;
+      case 'split-words': splitSelectedCue(); break;
+      case 'tap-timing': tapTiming(); break;
+      case 'undo-timing': undoTiming(); break;
+      case 'redo-timing': redoTiming(); break;
+      case 'finish-timing': finishTiming(); break;
+      case 'cancel-timing': cancelTiming(); break;
+      case 'toggle-fullscreen': void window.studio.toggleFullScreen().catch(cause => setError(preferenceError(cause))); break;
+    }
   };
   useEffect(() => {
-    const handle = (event: KeyboardEvent) => {
-      const actions = shortcutActions.current;
-      if (!actions.enabled || event.defaultPrevented || event.repeat) return;
-      if (event.key === ',' && (event.ctrlKey || event.metaKey || event.altKey)) {
-        event.preventDefault(); actions.preferences(); return;
-      }
-      if (event.altKey) return;
-      if (event.ctrlKey || event.metaKey) {
-        const key = event.key.toLowerCase();
-        if (key === 'o') { event.preventDefault(); actions.open(); }
-        if (key === 's') { event.preventDefault(); actions.save(event.shiftKey); }
-        return;
-      }
-      if (event.code === 'Space' && !(event.target as HTMLElement | null)?.closest('input, textarea, select, button, a, summary, [contenteditable]')) {
-        event.preventDefault(); actions.play();
-      }
-    };
+    const handle = (event: KeyboardEvent) => handleShortcut.current(event);
     window.addEventListener('keydown', handle);
     return () => window.removeEventListener('keydown', handle);
   }, []);
 
   const canStartTiming = Boolean(lines.length && player.current?.snapshot()?.ready && !busy && !timing);
   const activeCue = lines.findIndex(line => position >= line.startSeconds && position < line.endSeconds);
+  const selectedCue = lines.find(line => line.id === selectedCueId) ?? lines[activeCue];
+  const splitSelectedCue = () => { if (selectedCue) splitCue(selectedCue.id); };
   const projectTitle = title.trim() || 'Untitled Project';
   const fileName = openedProject ? basename(openedProject.file) : undefined;
   const projectActionsDisabled = busy || timing;
 
   return <div className="app-shell" data-theme={appearance.theme} data-accent={appearance.accent}
     style={{ '--inspector-width': inspectorWidth + 'px' } as CSSProperties}>
+    <input ref={lyricPicker} type="file" aria-label="Import Lyrics" accept=".txt,.json,.lrc,.elrc,.srt,.cdg" hidden onChange={event => {
+      const file = event.currentTarget.files?.[0];
+      if (file) void importLyrics(file);
+      event.currentTarget.value = '';
+    }} />
     <header className="topbar" inert={editorInert}>
       <div className="studio-brand">
         <img src={appearance.theme === 'day' ? markLight : markDark} alt="" />
@@ -833,12 +966,12 @@ export function App() {
         <span>{playing ? 'Playing' : busy ? 'Working…' : projectChanged || draftPending ? 'Unsaved changes' : fileName ? 'Saved' : 'Ready'}</span>
       </div>
       <div className="topbar-actions">
-        <IconButton icon="folder" label="Open Project" hint="Open Project (Ctrl/⌘+O)" disabled={projectActionsDisabled} onClick={() => void openProject()} />
-        <IconButton icon="save" label="Save Project" hint="Save Project (Ctrl/⌘+S)" disabled={projectActionsDisabled} onClick={() => void saveProject()} />
-        {openedProject && <IconButton icon="copy" label="Save As" hint="Save As (Ctrl/⌘+Shift+S)" disabled={projectActionsDisabled} onClick={() => void saveProject(true)} />}
+        <IconButton icon="folder" label="Open Project" hint={shortcutHint('Open Project', 'open')} disabled={projectActionsDisabled} onClick={() => void openProject()} />
+        <IconButton icon="save" label="Save Project" hint={shortcutHint('Save Project', 'save')} disabled={projectActionsDisabled} onClick={() => void saveProject()} />
+        {openedProject && <IconButton icon="copy" label="Save As" hint={shortcutHint('Save As', 'save-as')} disabled={projectActionsDisabled} onClick={() => void saveProject(true)} />}
         <span className="toolbar-divider" aria-hidden="true" />
         <IconButton icon="palette" label="Appearance" className="accent-button" onClick={() => setAppearanceOpen(true)} />
-        <IconButton icon="settings" label="Preferences" hint="Preferences (Ctrl/⌘/Alt+,)" onClick={() => setSettingsOpen(true)} />
+        <IconButton icon="settings" label="Preferences" hint={shortcutHint('Preferences', 'preferences')} onClick={() => openPreferences()} />
       </div>
     </header>
 
@@ -901,7 +1034,7 @@ export function App() {
             {stems.length > 0 && <span className="summary-pill">{stems.length} {stems.length === 1 ? 'stem' : 'stems'}</span>}
           </div>
           <div className="toolbar inspector-actions">
-            <button type="button" className="primary" disabled={busy} onClick={() => void window.studio.chooseAudioFiles().then(addLocalPaths).catch(cause => setError(String(cause)))}>
+            <button type="button" className="primary" disabled={busy} data-tip={shortcutHint('Import Audio', 'import-audio')} onClick={pickAudio}>
               <StudioIcon name="file" /> Import Audio
             </button>
             <button type="button" disabled={busy || timing || stems.length >= 12} onClick={() => {
@@ -949,14 +1082,10 @@ export function App() {
             <span className="summary-pill">{lines.length} {lines.length === 1 ? 'cue' : 'cues'}</span>
           </div>
           <div className="toolbar inspector-actions">
-            <label className="button-like"><StudioIcon name="file" /> Import Lyrics
-              <input className="file-input" aria-label="Import Lyrics" type="file" accept=".txt,.json,.lrc,.elrc,.srt,.cdg" disabled={busy || timing} onChange={event => {
-                const file = event.target.files?.[0];
-                if (file) void importLyrics(file);
-                event.currentTarget.value = '';
-              }} />
-            </label>
-            <button type="button" title="Reflow the lyric draft using the line lengths below. Existing cues keep their timing."
+            <button type="button" disabled={busy || timing} onClick={pickLyrics} data-tip={shortcutHint('Import a lyrics file', 'import-lyrics')}>
+              <StudioIcon name="file" /> Import Lyrics
+            </button>
+            <button type="button" data-tip={shortcutHint('Reflow the lyric draft and keep existing cue timing.', 'format-lyrics')}
               disabled={(!lyricsDraft.trim() && !cueText) || busy || timing || !!lyricVersions}
               onClick={formatLyrics}>Format Lyrics</button>
             {cdgPath && <button type="button" disabled={busy} onClick={() => { setCdgPath(null); setDecodedCdg(null); setStatus('CD+G graphics removed.'); }}>Remove CD+G</button>}
@@ -996,30 +1125,64 @@ export function App() {
             <div className="toolbar">
               <button type="button" className="primary" aria-label="Sync lyrics with AI" title="Align your supplied lyrics to the selected audio"
                 disabled={!lines.length || !alignmentStemId || busy || timing} data-tip="Align the supplied lyrics to the selected audio on this computer." onClick={() => void alignLyrics()}>AI Sync</button>
-              <button type="button" title="Tap line starts with Space during playback" disabled={!canStartTiming} onClick={() => void beginTiming()}>Time Lines</button>
-              <button type="button" title="Tap word starts with Space during playback" disabled={!canStartTiming} onClick={() => void beginWordTiming()}>Time Words</button>
+              <button type="button" data-tip={shortcutHint('Play from the current position and tap each line as it begins.', 'time-lines')} disabled={!canStartTiming} onClick={() => void beginTiming('line')}>Time Lines</button>
+              <button type="button" data-tip={shortcutHint('Play from the current position and tap each word as it begins.', 'time-words')} disabled={!canStartTiming} onClick={() => void beginTiming('word')}>Time Words</button>
             </div>
           </div>
           {lines.length > 0 ? <div className="cue-sheet">
             <div className="cue-columns muted" aria-hidden="true"><span>Cue</span><span>Lyrics</span><span>Start / End</span></div>
-            {lines.map((line, index) => <article className={'cue-block' + ((timing && captureMode === 'line' ? index === nextLine : index === activeCue) ? ' active' : '')} key={line.id}>
-              <button type="button" className="cue-number" onClick={() => seek(line.startSeconds)} aria-label={'Seek to cue ' + (index + 1)}>
-                {String(index + 1).padStart(2, '0')}
-              </button>
-              <input className="cue-text" aria-label={'Lyric line ' + (index + 1)} value={line.text} onChange={event => updateLine(line.id, { text: event.target.value })} />
-              <div className="cue-times">
-                <input aria-label={'Line ' + (index + 1) + ' start'} type="number" min="0" step="0.01" value={line.startSeconds} onChange={event => updateLine(line.id, { startSeconds: Number(event.target.value) })} />
-                <input aria-label={'Line ' + (index + 1) + ' end'} type="number" min="0" step="0.01" value={line.endSeconds} onChange={event => updateLine(line.id, { endSeconds: Number(event.target.value) })} />
-              </div>
-              {line.words.length > 0 && <details className="word-cues">
-                <summary>Word timings · {line.words.length}</summary>
-                {line.words.map((word, wordIndex) => <div className={'word-cue' + (timing && captureMode === 'word' && wordOffsets[index] + wordIndex === nextWord ? ' active' : '')} key={wordIndex}>
-                  <span className="word-label" title={word.text}>{word.text.trim() || ' '}</span>
-                  <input aria-label={'Line ' + (index + 1) + ' word ' + (wordIndex + 1) + ' start'} type="number" min="0" step="0.01" value={word.startSeconds} onChange={event => updateWord(line.id, wordIndex, 'startSeconds', Number(event.target.value))} />
-                  <input aria-label={'Line ' + (index + 1) + ' word ' + (wordIndex + 1) + ' end'} type="number" min="0" step="0.01" value={word.endSeconds} onChange={event => updateWord(line.id, wordIndex, 'endSeconds', Number(event.target.value))} />
-                </div>)}
-              </details>}
-            </article>)}
+            {lines.map((line, index) => {
+              const draft = Object.hasOwn(wordTimingDrafts, line.id) ? wordTimingDrafts[line.id] : undefined;
+              const timingWords = timingTarget?.line === index && timingTarget.word !== undefined;
+              const words = line.words.length ? line.words : timingWords ? timingSession?.prepared[index].words ?? []
+                : draft ? lyricWordTokens(line.text).map((text, index) => ({ text, ...draft[index] })) : [];
+              const canSplit = !timing && !busy && !words.length && Boolean(line.text.trim());
+              const split = canSplit ? () => splitCue(line.id) : undefined;
+              const selectCue = () => setSelectedCueId(line.id);
+              return <article className={'cue-block' + ((timing ? index === timingTarget?.line : index === activeCue) ? ' active' : '')}
+                data-selected={selectedCue?.id === line.id} key={line.id} onFocusCapture={selectCue} onClick={selectCue}
+                onContextMenu={event => {
+                  if (!split || event.target instanceof HTMLInputElement) return;
+                  event.preventDefault(); selectCue();
+                  void window.studio.timingContextMenu('line').then(action => { if (action === 'split-words') split(); })
+                    .catch(cause => setError(preferenceError(cause)));
+                }}>
+                <button type="button" className="cue-number" disabled={busy || timing} onClick={() => seek(line.startSeconds)} aria-label={'Seek to cue ' + (index + 1)}>
+                  {String(index + 1).padStart(2, '0')}
+                </button>
+                <input className="cue-text" aria-label={'Lyric line ' + (index + 1)} value={line.text} disabled={busy || timing}
+                  onChange={event => updateLine(line.id, { text: event.target.value })} />
+                <div className="cue-times">
+                  {(['startSeconds', 'endSeconds'] as const).map(field => <input key={field}
+                    aria-label={'Line ' + (index + 1) + ' ' + (field === 'startSeconds' ? 'start' : 'end')} type="number" min="0" step="0.001"
+                    value={timingPosition(line[field])} disabled={busy || timing}
+                    onChange={event => updateLine(line.id, { [field]: event.target.valueAsNumber })}
+                    onContextMenu={event => void timingFieldMenu(event, time => updateLine(line.id, { [field]: time }), split)} />)}
+                </div>
+                {canSplit && selectedCue?.id === line.id && <button type="button" className="split-cue-words small-button"
+                  data-tip="Divide this line into evenly spaced words using its timing, or leave the word times blank if no duration is available."
+                  onClick={splitSelectedCue}>Split Line into Word Timings</button>}
+                {words.length > 0 && <details className="word-cues" open={timingWords || expandedWordCues.has(line.id)}
+                  onToggle={event => { if (!timingWords) setWordsOpen(line.id, event.currentTarget.open); }}>
+                  <summary>Word timings · {words.length}</summary>
+                  {words.map((word, wordIndex) => <div className={'word-cue' + (timingWords && timingTarget.word === wordIndex ? ' active' : '')} key={wordIndex}>
+                    <span className="word-label" title={word.text}>{word.text.trim() || ' '}</span>
+                    {(['startSeconds', 'endSeconds'] as const).map(field => {
+                      const update = (value: number | undefined) => {
+                        if (draft) updateDraftWord(line, wordIndex, field, value);
+                        else if (value !== undefined) updateWord(line.id, wordIndex, field, value);
+                      };
+                      return <input key={field} aria-label={'Line ' + (index + 1) + ' word ' + (wordIndex + 1) + ' ' + (field === 'startSeconds' ? 'start' : 'end')}
+                        type="number" min="0" step="0.001" value={word[field] === undefined ? '' : timingPosition(word[field])} disabled={busy || timing}
+                        onChange={event => {
+                          const time = event.target.valueAsNumber;
+                          update(Number.isFinite(time) ? Math.max(0, time) : undefined);
+                        }} onContextMenu={event => void timingFieldMenu(event, update)} />;
+                    })}
+                  </div>)}
+                </details>}
+              </article>;
+            })}
           </div> : <p className="empty-row">Import lyrics or build cues from text.</p>}
         </>}
 
@@ -1053,14 +1216,17 @@ export function App() {
 
       <section className="transport" aria-label="Playback and timeline">
         {waveform && <WaveformTimeline overview={waveform} duration={previewDuration} position={position} lines={lines}
-          disabled={busy || timing} seek={seek} moveCue={moveCue} appearance={appearance.theme + ':' + appearance.accent} />}
-        {timing && <div className="capture-bar row">
+          disabled={busy || timing} seek={seek} moveCue={moveCue} onCueSelection={setSelectedCueId} appearance={appearance.theme + ':' + appearance.accent} />}
+        {timingSession && <div className="capture-bar row">
           <span className="status-dot live" aria-hidden="true" />
-          <span className="grow">Capturing {captureMode} timing</span>
-          <button type="button" className="primary" onClick={captureMode === 'word' ? tapWord : tapLine}>
-            {captureMode === 'word' ? 'Tap Word · ' + Math.min(nextWord + 1, wordCount) + '/' + wordCount : 'Tap Line · ' + Math.min(nextLine + 1, lines.length) + '/' + lines.length}
+          <span className="grow">Capturing {timingSession.mode} timing</span>
+          <button type="button" className="primary" onClick={tapTiming} disabled={!timingTarget} data-tip={shortcutHint('Mark the next cue at the playhead', 'tap-timing')}>
+            {'Tap ' + (timingSession.mode === 'word' ? 'Word' : 'Line') + ' · ' + Math.min(timingSession.cursor + 1, timingSession.targets.length) + '/' + timingSession.targets.length}
           </button>
-          <button type="button" onClick={finishTiming}>Finish Timing</button>
+          <button type="button" disabled={timingSession.cursor === 0} data-tip={shortcutHint('Restore the cues from before the last tap.', 'undo-timing')} onClick={undoTiming}>Undo</button>
+          <button type="button" disabled={timingSession.cursor + 1 >= timingSession.frames.length} data-tip={shortcutHint('Restore the timing from the next undone tap.', 'redo-timing')} onClick={redoTiming}>Redo</button>
+          <button type="button" data-tip={shortcutHint('Discard this timing session and restore previous cue times.', 'cancel-timing')} onClick={cancelTiming}>Cancel Timing</button>
+          <button type="button" data-tip={shortcutHint('Keep the recorded timing changes.', 'finish-timing')} onClick={finishTiming}>Finish Timing</button>
         </div>}
         <div className="transport-strip">
           <div className="transport-track">
@@ -1075,9 +1241,11 @@ export function App() {
             <span>{seconds(previewDuration)}</span>
           </div>
           <div className="transport-actions">
-            <IconButton icon="previous" label="Jump to Start" disabled={!previewDuration} onClick={() => seek(0)} />
-            <IconButton icon={playing ? 'pause' : 'play'} label={playing ? 'Pause' : 'Play'} hint={(playing ? 'Pause' : 'Play') + ' (Space)'}
+            <IconButton icon="backFive" label="Skip Back 5 Seconds" hint={shortcutHint('Skip Back 5 Seconds', 'skip-backward')} disabled={!previewDuration} onClick={() => skip(-5)} />
+            <IconButton icon="previous" label="Jump to Start" hint={shortcutHint('Jump to Start', 'restart')} disabled={!previewDuration} onClick={() => seek(0)} />
+            <IconButton icon={playing ? 'pause' : 'play'} label={playing ? 'Pause' : 'Play'} hint={shortcutHint(playing ? 'Pause' : 'Play', 'play-pause')}
               className="primary play-button" disabled={!stems.some(stem => stem.url)} onClick={() => void togglePlay()} />
+            <IconButton icon="forwardTen" label="Skip Forward 10 Seconds" hint={shortcutHint('Skip Forward 10 Seconds', 'skip-forward')} disabled={!previewDuration} onClick={() => skip(10)} />
             <label className="transport-volume"><StudioIcon name="volume" />
               <input aria-label="Mix volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={event => setMasterVolume(Number(event.target.value))} />
             </label>
@@ -1106,7 +1274,9 @@ export function App() {
         </div>
       </section>
     </div>}
-    {lyricAppearanceOpen && <LyricAppearance value={lyricStyle} change={setLyricStyle} close={() => setLyricAppearanceOpen(false)} />}
+    {lyricAppearanceOpen && <LyricAppearance value={lyricStyle} change={setLyricStyle} close={() => setLyricAppearanceOpen(false)}
+      backdrop={background?.path} busy={busy} chooseBackdrop={() => void chooseBackground()}
+      clearBackdrop={() => { setBackground(null); setBackgroundLoop(true); }} />}
     {voiceRecorderOpen && <VoiceRecorder title={title} roles={roles} onSaved={addVoiceRecording} onClose={() => setVoiceRecorderOpen(false)} />}
     {recoveryOpen && <div className="settings" role="presentation">
       <section className="settings-card" role="dialog" aria-modal="true" aria-labelledby="recovery-title" onKeyDown={event => {
@@ -1132,7 +1302,8 @@ export function App() {
       </section>
     </div>}
     {/* The dialog takes a draft snapshot when it opens, so wait for saved settings on startup. */}
-    {settingsOpen && settingsLoaded && <PreferencesDialog settings={settings} close={() => setSettingsOpen(false)} onSave={(value, scope) => {
+    {settingsOpen && settingsLoaded && <PreferencesDialog settings={settings} initialSection={settingsSection}
+      shortcuts={shortcuts} onSaveShortcuts={saveShortcuts} close={() => setSettingsOpen(false)} onSave={(value, scope) => {
       setSettings(value); setSettingsOpen(false); setStatus(scope === 'session' ? 'Preferences applied for this session.' : 'Default preferences saved.');
     }} />}
   </div>;

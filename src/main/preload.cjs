@@ -1,11 +1,24 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('studio', {
   getSettings: () => ipcRenderer.invoke('studio:get-settings'),
+  getStudioShortcuts: () => ipcRenderer.invoke('studio:get-shortcuts'),
+  saveStudioShortcuts: value => ipcRenderer.invoke('studio:save-shortcuts', value),
+  reloadStudioShortcuts: () => ipcRenderer.invoke('studio:reload-shortcuts'),
+  onStudioShortcutsChanged: listener => {
+    const onChange = (_event, value) => listener(value);
+    ipcRenderer.on('studio:shortcuts-changed', onChange);
+    return () => ipcRenderer.removeListener('studio:shortcuts-changed', onChange);
+  },
+  setStudioShortcutRecording: recording => ipcRenderer.invoke('studio:record-shortcut', recording),
+  getConfigurationFiles: () => ipcRenderer.invoke('studio:configuration-files'),
+  revealConfigurationFile: kind => ipcRenderer.invoke('studio:reveal-configuration-file', kind),
+  openStudioShortcutsFile: () => ipcRenderer.invoke('studio:open-shortcuts-file'),
+  toggleFullScreen: () => ipcRenderer.invoke('studio:toggle-full-screen'),
   getPreferenceDefaults: () => ipcRenderer.invoke('studio:preference-defaults'),
   saveSettings: (value, scope) => ipcRenderer.invoke('studio:save-settings', { value, scope }),
   getModelLibrary: folder => ipcRenderer.invoke('studio:model-library', folder),
   downloadSeparationModel: id => ipcRenderer.invoke('studio:download-model', id),
-  chooseUvrModelsFolder: () => ipcRenderer.invoke('studio:choose-models-folder'),
+  chooseUvrModelsFolder: folder => ipcRenderer.invoke('studio:choose-models-folder', folder),
   openModelsFolder: folder => ipcRenderer.invoke('studio:open-models-folder', folder),
   onMenuAction: listener => {
     const onAction = (_event, action) => listener(action);
@@ -40,6 +53,9 @@ contextBridge.exposeInMainWorld('studio', {
   getPathForFile: file => webUtils.getPathForFile(file),
   registerMedia: filePath => ipcRenderer.invoke('studio:register-media', filePath),
   registerBackground: filePath => ipcRenderer.invoke('studio:register-backdrop', filePath),
+  listLyricFonts: () => ipcRenderer.invoke('studio:list-lyric-fonts'),
+  addLyricFont: () => ipcRenderer.invoke('studio:add-lyric-font'),
+  registerLyricFont: filePath => ipcRenderer.invoke('studio:register-lyric-font', filePath),
   readCdg: filePath => ipcRenderer.invoke('studio:read-cdg', filePath),
   exportCdg: input => ipcRenderer.invoke('studio:export-cdg', input),
   chooseAudioFiles: () => ipcRenderer.invoke('studio:choose-audio'),
@@ -48,6 +64,7 @@ contextBridge.exposeInMainWorld('studio', {
   saveVoiceRecording: input => ipcRenderer.invoke('studio:save-voice-recording', input),
   chooseImageFile: () => ipcRenderer.invoke('studio:choose-image'),
   saveText: input => ipcRenderer.invoke('studio:save-text', input),
+  timingContextMenu: context => ipcRenderer.invoke('studio:timing-context-menu', context),
   exportKit: input => ipcRenderer.invoke('studio:export-kit', input),
   exportVideo: input => ipcRenderer.invoke('studio:export-video', input),
   separate: input => ipcRenderer.invoke('studio:separate', input),

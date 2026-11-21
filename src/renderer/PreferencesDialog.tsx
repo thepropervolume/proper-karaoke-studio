@@ -1,8 +1,11 @@
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
 import { alignmentLanguages, separatorModels } from '../domain/studio-options.json';
 import type { StudioModelLibrary } from '../domain/model-library';
+import type { StudioShortcuts } from '../domain/studio-shortcuts';
 import { HelpTip } from './HelpTip';
 import { ModelsPanel } from './ModelsPanel';
+import { SplitAction } from './SplitAction';
+import { StudioShortcutPreferences } from './StudioShortcutPreferences';
 
 const languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
 const languages = alignmentLanguages.map(code => ({ code, name: languageNames.of(code) ?? code }))
@@ -13,7 +16,14 @@ export function preferenceError(cause: unknown) {
     .replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
 }
 
-type Props = { settings: StudioSettings; close(): void; onSave(settings: StudioSettings, scope: PreferenceScope): void };
+type Props = {
+  settings: StudioSettings;
+  initialSection?: 'shortcuts';
+  shortcuts: StudioShortcuts;
+  close(): void;
+  onSave(settings: StudioSettings, scope: PreferenceScope): void;
+  onSaveShortcuts(value: StudioShortcuts): Promise<void>;
+};
 const adapterLabels: Record<SeparatorAdapter, string> = {
   'audio-separator': 'Audio Separator (UVR)', demucs: 'Demucs', dango: 'Dango AI (Cloud)', mvsep: 'MVSEP (Cloud)', gaudio: 'GAUDIO (Cloud)',
 };
@@ -36,9 +46,9 @@ export function PreferenceField({ label, hint, reset, children }: {
   </div>;
 }
 
-export function PreferencesDialog({ settings, close, onSave }: Props) {
+export function PreferencesDialog({ settings, initialSection, shortcuts, close, onSave, onSaveShortcuts }: Props) {
   const [draft, setDraft] = useState(settings);
-  const [section, setSection] = useState<'tools' | 'models' | 'integrations'>('tools');
+  const [section, setSection] = useState<'tools' | 'models' | 'integrations' | 'shortcuts'>(initialSection ?? 'tools');
   const [defaults, setDefaults] = useState<{ saved: StudioSettings; factory: StudioSettings }>();
   const [catalog, setCatalog] = useState<SeparatorCatalog>();
   const [library, setLibrary] = useState<StudioModelLibrary>();
@@ -57,6 +67,7 @@ export function PreferencesDialog({ settings, close, onSave }: Props) {
     ...standard,
   ].map(model => [model.id, model])).values()];
   const groups = [...new Set(models.map(model => model.group))];
+  const downloadedModels = new Set(library?.models.filter(model => model.adapter === adapter && model.downloaded).map(model => model.id));
 
   useEffect(() => { void window.studio.getPreferenceDefaults().then(setDefaults).catch(cause => setError(preferenceError(cause))); }, []);
   useEffect(() => {
@@ -109,8 +120,7 @@ export function PreferencesDialog({ settings, close, onSave }: Props) {
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const scope = ((event.nativeEvent as SubmitEvent).submitter as HTMLElement | null)?.dataset.scope === 'default' ? 'default' : 'session';
-    void save(scope);
+    void save('session');
   }
 
   function changeAdapter(value: SeparatorAdapter) {
@@ -127,6 +137,15 @@ export function PreferencesDialog({ settings, close, onSave }: Props) {
   const refreshModels = () => setDiscovery({ executable, refresh: true });
   const modelReset = adapter === saved.separatorAdapter ? saved.separatorModel : separatorModels[adapter][0].id;
   const backingChoices = library?.models.filter(model => model.purpose === 'backing') ?? [];
+  const saveControl = <SplitAction emphasized upward disabled={saving} menuLabel="Show settings save options" primary={{
+    label: 'Save Session Settings',
+    help: 'Apply these changes now, until Studio closes. Your startup defaults stay the same.',
+    run: () => void save('session'),
+  }} alternatives={[{
+    label: 'Save as Default Settings',
+    help: 'Apply these changes now and load them automatically each time Studio starts.',
+    run: () => void save('default'),
+  }]} />;
 
   return <div className="settings" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) close(); }}>
     <section className="settings-card preferences-card" role="dialog" aria-modal="true" aria-labelledby="preferences-title"
@@ -139,6 +158,7 @@ export function PreferencesDialog({ settings, close, onSave }: Props) {
         <button type="button" aria-pressed={section === 'tools'} onClick={() => setSection('tools')}>Audio &amp; Lyrics</button>
         <button type="button" aria-pressed={section === 'models'} onClick={() => setSection('models')}>Download Models</button>
         <button type="button" aria-pressed={section === 'integrations'} onClick={() => setSection('integrations')}>Integrations</button>
+        <button type="button" aria-pressed={section === 'shortcuts'} onClick={() => setSection('shortcuts')}>Keyboard Shortcuts</button>
       </nav>
       {section === 'tools' ? <form className="stack" onSubmit={submit}>
         <div className="settings-group">
@@ -154,7 +174,9 @@ export function PreferencesDialog({ settings, close, onSave }: Props) {
               {id => <select id={id} value={draft.separatorModel} onChange={event => edit('separatorModel', event.target.value)}>
                 {!models.some(model => model.id === draft.separatorModel) && <option value={draft.separatorModel}>{draft.separatorModel} (Saved)</option>}
                 {groups.map(group => <optgroup key={group} label={group}>
-                  {models.filter(model => model.group === group).map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
+                  {models.filter(model => model.group === group).map(model => <option key={model.id} value={model.id} data-model-ready={downloadedModels.has(model.id) || undefined}>
+                    {model.label}{downloadedModels.has(model.id) ? ' ✓' : ''}
+                  </option>)}
                 </optgroup>)}
               </select>}
             </PreferenceField>
@@ -167,7 +189,9 @@ export function PreferencesDialog({ settings, close, onSave }: Props) {
                 if (selected.length > 3) { setError('Choose up to three additional models.'); return; }
                 setError(''); edit('ensembleModels', selected);
               }}>
-                {models.filter(model => model.id !== draft.separatorModel).map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
+                {models.filter(model => model.id !== draft.separatorModel).map(model => <option key={model.id} value={model.id} data-model-ready={downloadedModels.has(model.id) || undefined}>
+                  {model.label}{downloadedModels.has(model.id) ? ' ✓' : ''}
+                </option>)}
               </select>}
             </PreferenceField>
             <PreferenceField label="Backing Vocal Model" hint="Run a second pass on the separated vocals to create lead and backing vocal stems."
@@ -176,7 +200,9 @@ export function PreferencesDialog({ settings, close, onSave }: Props) {
                 <option value="">Off</option>
                 {!backingChoices.length && <option value="5_HP-Karaoke-UVR.pth">UVR Karaoke Vocal Split</option>}
                 {draft.backingModel && draft.backingModel !== '5_HP-Karaoke-UVR.pth' && !backingChoices.some(model => model.id === draft.backingModel) && <option>{draft.backingModel}</option>}
-                {backingChoices.map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
+                {backingChoices.map(model => <option key={model.id} value={model.id} data-model-ready={model.downloaded || undefined}>
+                  {model.label}{model.downloaded ? ' ✓' : ''}
+                </option>)}
               </select>}
             </PreferenceField>
           </div>}
@@ -186,8 +212,8 @@ export function PreferencesDialog({ settings, close, onSave }: Props) {
               : listBusy ? 'Checking the separator for models…'
                 : catalog?.source === 'installed' ? 'Showing the separator’s model catalog.' : 'Showing recommended models.'}</span>
             <div className="toolbar">
-              <button type="button" onClick={() => void window.studio.openModelsFolder(draft.uvrModelsPath).catch(cause => setError(preferenceError(cause)))}>Open Models Folder</button>
-              {local && <button type="button" disabled={listBusy} onClick={refreshModels}>Refresh Models</button>}
+              <button type="button" data-tip="Show model storage, available downloads, and folder actions." onClick={() => setSection('models')}>Models and Folders</button>
+              {local && <button type="button" disabled={listBusy} data-tip="Check your local separator for an updated model list." onClick={refreshModels}>Refresh Models</button>}
             </div>
           </div>
         </div>
@@ -225,27 +251,22 @@ export function PreferencesDialog({ settings, close, onSave }: Props) {
         </details>
         {error && <p className="error" role="alert">{error}</p>}
         <div className="row spaced preference-footer">
-          <button type="button" disabled={saving || !defaults} onClick={() => {
+          <button type="button" disabled={saving || !defaults} data-tip="Load Studio’s factory values into this form. Save to apply them." onClick={() => {
             if (!defaults) return;
             setDraft(defaults.factory); setDiscovery({ executable: defaults.factory.separatorExecutable, refresh: false });
           }}>Restore Factory Settings</button>
-          <div className="toolbar">
-            <button disabled={saving} type="submit" data-scope="session" data-tip="Use these settings until Studio closes.">Apply for This Session</button>
-            <button className="primary" disabled={saving} type="submit" data-scope="default" data-tip="Use these settings whenever Studio starts.">Save as Default</button>
-          </div>
+          {saveControl}
         </div>
       </form> : section === 'models' ? <>
         <ModelsPanel uvrModelsPath={draft.uvrModelsPath}
           onFolderChange={folder => edit('uvrModelsPath', folder)} onModelsChanged={refreshModels} />
         <div className="row spaced preference-footer">
-          <button type="button" onClick={() => edit('uvrModelsPath', saved.uvrModelsPath)}>Reset Model Folder</button>
-          <div className="toolbar">
-            <button type="button" disabled={saving} onClick={() => void save('session')}>Apply for This Session</button>
-            <button type="button" className="primary" disabled={saving} onClick={() => void save('default')}>Save as Default</button>
-          </div>
+          <button type="button" data-tip="Restore your saved UVR folder selection without moving or deleting model files."
+            onClick={() => edit('uvrModelsPath', saved.uvrModelsPath)}>Reset UVR Folder</button>
+          {saveControl}
         </div>
         {error && <p className="error" role="alert">{error}</p>}
-      </> : <IntegrationsPanel />}
+      </> : section === 'shortcuts' ? <StudioShortcutPreferences value={shortcuts} onSave={onSaveShortcuts} /> : <IntegrationsPanel />}
     </section>
   </div>;
 }
