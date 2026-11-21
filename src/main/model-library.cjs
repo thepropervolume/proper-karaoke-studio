@@ -19,7 +19,8 @@ const maxBytes = 1024 * 1024 * 1024;
 function commonUvrPaths() {
   const home = os.homedir();
   if (process.platform === 'win32') {
-    return [process.env.ProgramFiles, process.env['ProgramFiles(x86)'],
+    return [process.env.ProgramW6432, process.env.ProgramFiles, process.env['ProgramFiles(x86)'],
+      path.join((process.env.SystemDrive || 'C:') + path.sep, 'Program Files'),
       process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs')].filter(Boolean)
       .flatMap(root => ['Ultimate Vocal Remover', 'Ultimate Vocal Remover GUI', 'UVR'].map(name => path.join(root, name, 'models')));
   }
@@ -44,7 +45,7 @@ async function hasModelFolder(candidate) {
 
 async function locateUvrFolder(input) {
   if (typeof input !== 'string' || !input || input.length > 4096 || !path.isAbsolute(input)) return null;
-  for (const directory of [path.resolve(input), path.join(input, 'models')]) {
+  for (const directory of [path.join(input, 'models'), path.resolve(input)]) {
     if (await hasModelFolder(directory)) return directory;
   }
   return null;
@@ -130,10 +131,8 @@ async function borrowVerified(file, directory, sourceRoot) {
   const temporary = path.join(directory, '.' + randomUUID() + '.import');
   try {
     await fs.copyFile(source, temporary);
-    if (await hashFile(temporary) !== file.sha256) {
-      throw new Error(file.name + ' in the UVR folder differs from the published model. Download a verified copy into Studio instead.');
-    }
-    await fs.rename(temporary, destination);
+    // A stale UVR weight should never replace a locally installed or upstream copy.
+    if (await hashFile(temporary) === file.sha256) await fs.rename(temporary, destination);
   } finally { await fs.rm(temporary, { force: true }); }
 }
 
@@ -142,6 +141,7 @@ function createModelLibrary(studioDirectory, { searchRoots = commonUvrPaths(), f
   const modelSpec = (id, adapter) => downloads.find(model => model.id === id && model.adapter === adapter
     || adapter === 'audio-separator' && model.adapter === 'demucs' && model.id + '.yaml' === id);
   const cacheDirectory = (adapter, root = studioDirectory) => path.join(root, adapter === 'demucs' ? 'Demucs' : 'Audio Separator');
+  const detectedUvrFolders = async () => [...new Set((await Promise.all([...new Set(searchRoots)].map(locateUvrFolder))).filter(Boolean))];
   async function directory(uvrModelsPath = '') {
     if (uvrModelsPath) {
       const resolved = await locateUvrFolder(uvrModelsPath);
@@ -153,15 +153,14 @@ function createModelLibrary(studioDirectory, { searchRoots = commonUvrPaths(), f
   }
 
   async function inventory(uvrModelsPath = '') {
-    const detectedFolders = [...new Set((await Promise.all(searchRoots.map(locateUvrFolder))).filter(Boolean))];
-    const uvrDirectory = await locateUvrFolder(uvrModelsPath);
-    const source = uvrDirectory || detectedFolders[0];
+    const detectedFolders = await detectedUvrFolders();
+    const uvrDirectory = await locateUvrFolder(uvrModelsPath) || detectedFolders[0] || null;
     return {
       studioDirectory, detectedFolders, uvrDirectory,
       models: await Promise.all(downloads.map(async ({ files, ...model }) => ({
         ...model,
         downloaded: (await Promise.all(files.map(file => checkFile(path.join(cacheDirectory(model.adapter), file.name))))).every(Boolean),
-        foundInUvr: Boolean(source) && (await Promise.all(files.map(file => borrowedFile(source, file.name)))).every(Boolean),
+        foundInUvr: Boolean(uvrDirectory) && (await Promise.all(files.map(file => borrowedFile(uvrDirectory, file.name)))).every(Boolean),
       }))),
     };
   }
@@ -185,7 +184,7 @@ function createModelLibrary(studioDirectory, { searchRoots = commonUvrPaths(), f
 
   async function prepare(ids, uvrModelsPath = '', adapter = 'audio-separator') {
     if (adapter !== 'audio-separator' && adapter !== 'demucs') return undefined;
-    const sourceRoot = uvrModelsPath ? await directory(uvrModelsPath) : null;
+    const sourceRoot = await locateUvrFolder(uvrModelsPath) || (await detectedUvrFolders())[0] || null;
     const destination = cacheDirectory(adapter);
     await fs.mkdir(destination, { recursive: true });
     const models = ids.map(id => modelSpec(id, adapter));

@@ -1,6 +1,8 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. */
 import { useEffect, useState } from 'react';
 import type { StudioLibraryModel, StudioModelLibrary } from '../domain/model-library';
+import { HelpTip } from './HelpTip';
+import { SplitAction } from './SplitAction';
 
 type Props = {
   uvrModelsPath: string;
@@ -30,7 +32,7 @@ export function ModelsPanel({ uvrModelsPath, onFolderChange, onModelsChanged }: 
     return () => { active = false; };
   }, [uvrModelsPath, refresh]);
 
-  const folders = [...new Set([uvrModelsPath, ...(library?.detectedFolders ?? [])].filter(Boolean))];
+  const uvrDirectory = library?.uvrDirectory || '';
   const families = [...new Set(library?.models.map(model => model.group) ?? [])];
   const catalog = library?.models.filter(model => !family || model.group === family) ?? [];
   const selection: StudioLibraryModel | undefined = catalog.find(model => model.id === modelId) ?? catalog[0];
@@ -38,7 +40,7 @@ export function ModelsPanel({ uvrModelsPath, onFolderChange, onModelsChanged }: 
   async function chooseFolder() {
     setError('');
     try {
-      const folder = await window.studio.chooseUvrModelsFolder();
+      const folder = await window.studio.chooseUvrModelsFolder(uvrDirectory);
       if (folder) onFolderChange(folder);
     } catch (cause) { setError(errorText(cause)); }
   }
@@ -63,21 +65,27 @@ export function ModelsPanel({ uvrModelsPath, onFolderChange, onModelsChanged }: 
   return <div className="stack">
     <section className="settings-group" aria-labelledby="model-storage-title">
       <div className="row spaced">
-        <h3 id="model-storage-title">Model Storage</h3>
-        <button type="button" onClick={() => void openFolder('')} data-tip={library?.studioDirectory || 'Open Studio’s model cache.'}>Open Studio Models Folder</button>
-      </div>
-      <label className="field-label">Reuse Models from Ultimate Vocal Remover
-        <select value={uvrModelsPath} onChange={event => onFolderChange(event.target.value)}>
-          <option value="">Studio models only</option>
-          {folders.map(folder => <option key={folder} value={folder}>{folder}</option>)}
-        </select>
-      </label>
-      <div className="row spaced">
-        <span className="muted">{library?.detectedFolders.length ? 'Ultimate Vocal Remover detected.' : 'Choose the installation or its models folder to reuse weights.'}</span>
-        <div className="toolbar">
-          <button type="button" onClick={() => void chooseFolder()}>Choose UVR Folder…</button>
-          {uvrModelsPath && <button type="button" onClick={() => void openFolder(uvrModelsPath)} data-tip={uvrModelsPath}>Open UVR Folder</button>}
+        <div className="row"><h3 id="model-storage-title">Model Storage</h3>
+          <HelpTip label="Model storage">Studio checks its own cache first, then reuses verified models from Ultimate Vocal Remover when available.</HelpTip>
         </div>
+        <SplitAction primary={{
+          label: uvrModelsPath || uvrDirectory ? 'Change UVR Folder…' : 'Choose UVR Folder…',
+          help: 'Choose the Ultimate Vocal Remover application directory or its models subfolder.',
+          run: () => void chooseFolder(),
+        }} alternatives={[
+          { label: 'Open Studio Models Folder', help: 'Open ' + (library?.studioDirectory || 'the Studio model cache') + ' in the file manager.',
+            run: () => void openFolder('') },
+          ...(uvrDirectory ? [{ label: 'Open UVR Folder', help: 'Open ' + uvrDirectory + ' in the file manager.',
+            run: () => void openFolder(uvrDirectory) }] : []),
+        ]} menuLabel="Show model folder actions" />
+      </div>
+      <div className="row spaced">
+        <span className="muted model-folder-status">{library ? uvrDirectory
+          ? <>Using Studio and Ultimate Vocal Remover models from <code>{uvrDirectory}</code>.</>
+          : 'Using Studio models. Select a UVR installation or its models folder to reuse additional weights.'
+          : 'Looking for Ultimate Vocal Remover…'}</span>
+        {uvrModelsPath && <button type="button" data-tip="Forget the custom UVR folder and look in standard installation locations."
+          onClick={() => onFolderChange('')}>Use Automatic Detection</button>}
       </div>
     </section>
     <section className="settings-group" aria-labelledby="download-models-title">
@@ -91,7 +99,9 @@ export function ModelsPanel({ uvrModelsPath, onFolderChange, onModelsChanged }: 
         </label>
         <label className="field-label">Model
           <select value={selection?.id || ''} onChange={event => setModelId(event.target.value)} disabled={!catalog.length || !!downloading}>
-            {catalog.map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
+            {catalog.map(model => <option key={model.id} value={model.id} data-model-ready={model.downloaded || undefined}>
+              {model.label}{model.downloaded ? ' ✓' : ''}
+            </option>)}
           </select>
         </label>
       </div>

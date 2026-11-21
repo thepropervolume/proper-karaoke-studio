@@ -29,13 +29,13 @@ test('detects a UVR installation and reuses verified weights without modifying t
   });
   const inventory = await library.inventory();
   assert.deepEqual(inventory.detectedFolders, [path.join(installation, 'models')]);
-  assert.equal(inventory.uvrDirectory, null);
+  assert.equal(inventory.uvrDirectory, path.join(installation, 'models'));
   assert.equal(inventory.models[0].foundInUvr, true);
   assert.equal(inventory.models[0].downloaded, false);
-  const destination = await library.prepare([leaf], installation);
+  const destination = await library.prepare([leaf]);
   assert.deepEqual(await readFile(path.join(destination, leaf)), checkpoint);
   assert.deepEqual(await readFile(original), checkpoint);
-  assert.equal((await library.inventory(installation)).models[0].downloaded, true);
+  assert.deepEqual((await library.inventory(installation)).models.map(({ downloaded, foundInUvr }: { downloaded: boolean; foundInUvr: boolean }) => [downloaded, foundInUvr]), [[true, true]]);
   await assert.rejects(library.directory(path.join(directory, 'missing')), /Choose the Ultimate Vocal Remover/);
   await writeFile(path.join(destination, leaf), 'Changed checkpoint');
   await assert.rejects(library.prepare([leaf], installation), /failed verification/);
