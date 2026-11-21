@@ -856,7 +856,7 @@ export function App() {
         : { name, duration: exportDuration, ass: toAss(title, artist, exportDuration, lines, 'cdg', lyricStyle),
           backgroundColor: lyricStyle.backgroundColor, customFontPath, ffmpegPath: settings.ffmpegPath });
       if (saved) setStatus('Exported CD+G graphics: ' + basename(saved) + '.');
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    } catch (cause) { setError(preferenceError(cause)); }
     finally { setBusy(false); }
   };
 

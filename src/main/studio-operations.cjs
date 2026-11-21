@@ -167,6 +167,16 @@ async function probeAudio(file, ffmpegPath = defaultSettings.ffmpegPath) {
   return seconds;
 }
 
+async function removeExportScratch(directory) {
+  try {
+    // Sync clients and other Windows processes can briefly hold the scratch directory open.
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch (error) {
+    // Cleanup must preserve the published result or the error that prevented publication.
+    console.warn('Could not remove a Studio export temporary directory (' + (error.code || 'unknown error') + ').');
+  }
+}
+
 // Finish writing next to the destination before publishing the result.
 async function writeOutput(destination, overwrite, write) {
   const temporaryDirectory = await fs.mkdtemp(path.join(path.dirname(destination), '.tpv-export-'));
@@ -183,7 +193,7 @@ async function writeOutput(destination, overwrite, write) {
       }
     }
     return destination;
-  } finally { await fs.rm(temporaryDirectory, { recursive: true, force: true }); }
+  } finally { await removeExportScratch(temporaryDirectory); }
 }
 
 function exportBackground(value, fallback) {
@@ -250,7 +260,7 @@ async function rasterizeCdg(ass, duration, ffmpeg, color, customFontPath) {
     if (startupError) throw new Error('Could not start FFmpeg for CD+G export. Check its executable in Preferences.');
     if (code !== 0 || length) throw new Error('FFmpeg could not render the CD+G lyrics. ' + stderr.trim());
     return encoder.finish();
-  } finally { await fs.rm(directory, { recursive: true, force: true }); }
+  } finally { await removeExportScratch(directory); }
 }
 
 async function exportCdg(input, destination, overwrite = true) {
@@ -340,7 +350,7 @@ async function exportVideo(input, destination, overwrite = true) {
       '-metadata', 'artist=' + text(input.artist, 'song artist', 300), '-f', 'mp4');
     const executable = /[\\/]/.test(ffmpeg) ? path.resolve(ffmpeg) : ffmpeg;
     return await writeOutput(destination, overwrite, temporaryFile => spawnTool(executable, [...args, temporaryFile], 'FFmpeg', { cwd: tempDir }));
-  } finally { await fs.rm(tempDir, { recursive: true, force: true }); }
+  } finally { await removeExportScratch(tempDir); }
 }
 
 async function separate(input, directory) {
