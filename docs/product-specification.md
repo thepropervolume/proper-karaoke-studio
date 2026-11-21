@@ -4,16 +4,16 @@
 
 The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaoke tracks from audio stems and timed lyrics. It previews the result with the same lyric renderer used in The Proper Volume Karaoke Booth, then exports a video or a portable TPV kit.
 
-## Prototype 0.10.0
+## Prototype 0.11.0
 
 ### Implemented
 
 - Import multiple local audio files and label each as instrumental, lead, backing, or other; voice names are editable.
 - Preview synchronized stems with independent stem gain and master volume.
-- Paste lyrics and capture line or word starts during playback with the timing button or Spacebar; cue and word start/end times are directly editable.
-- Scrub through a zoomable waveform and move a selected lyric cue to the playhead while retaining its word timing offsets.
+- Capture line or word starts at the playhead, with undo, redo, and session cancellation. Set individual timing fields from the context menu or split a line into an editable word draft.
+- Scrub, pan, and zoom at the pointer in a resizable waveform. Move a cue to the playhead while retaining word offsets. Transport can skip back 5 seconds or ahead 10 seconds.
 - Work in a Booth-style workspace with Day and Night appearance, selectable accents, a large singer preview, a resizable editor, and fixed playback controls. [Workspace guide](workspace.md)
-- Save per-project lyric font, casing, one to four lines, and a custom palette with picker and hex inputs. The preview and authored video and CD+G exports share a centered layout and per-line visibility schedule.
+- Save a bundled or custom lyric font, font size, leading, casing, colors, and one to four rows. Rows fade out and refill in place. The preview and authored MP4 and CD+G exports share timing for the optional song-progress and countdown bars.
 - Format imported or pasted lyrics with adjustable minimum, target, and maximum line lengths. The formatter leaves timed cues available until the user rebuilds them. [Formatting guide](workspace.md)
 - Force-align supplied lyrics to a selected local audio track with WhisperX. The alignment path does not run speech recognition, generate lyrics, or change supplied text; exact lyric words and line breaks are retained while timings are added.
 - Import and export the Studio lyrics JSON schema, Enhanced LRC word timestamps, and SRT line cues. Studio uses Karaoke Core for LRC, SRT, and the common timing types.
@@ -24,7 +24,7 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 - Reopen a TPV kit from **Open Project** or the CLI. Studio creates an editable project with its own adjacent media folder and preserves its cue and stem settings.
 - Download verified model weights or reuse local Ultimate Vocal Remover models. Audio Separator ensembles can combine models and split the result into lead, backing, and instrumental tracks. [Model library](models.md)
 - Manage encrypted credentials for Dango AI, MVSEP, and GAUDIO. Review and approve each cloud stem-separation request. Custom entries store credentials for other services.
-- Apply Preferences for this session or save them as defaults. Reset individual fields to the saved defaults.
+- Apply Preferences for this session or save them as defaults. Reset individual fields to the saved defaults. Assign keyboard shortcuts and open the JSON preferences and keybindings files from Studio.
 - Record a microphone take, audition the take, and save it as a labeled local WAV stem from the [desktop editor](voice-recording.md).
 - Open and save editable Studio projects in one shared file format for the desktop editor and CLI.
 - Keep local snapshots of unsaved desktop edits and pending lyric text. [Project recovery](project-recovery.md) restores these snapshots after reopening Studio.
@@ -46,7 +46,7 @@ Studio runs the configured Audio Separator or Demucs executable, or an approved 
 
 ## Project and kit format
 
-A TPV kit is a ZIP archive containing manifest.json, lyrics/lyrics.json, lyrics/lyrics.enhanced.lrc, lyrics/lyrics.srt, and a stems/ directory. Optional CD+G graphics and backdrop media live under source/ and background/. Paths in the manifest are relative to the kit. Kit schema version 1 is private to Studio until its format is reviewed and published.
+A TPV kit is a ZIP archive containing manifest.json, lyrics/lyrics.json, lyrics/lyrics.enhanced.lrc, lyrics/lyrics.srt, and a stems/ directory. Optional CD+G graphics, backdrop media, and the selected custom lyric font live under source/, background/, and fonts/. Paths in the manifest are relative to the kit. Kit schema version 1 is private to Studio until its format is reviewed and published.
 
 ## File-format support
 
