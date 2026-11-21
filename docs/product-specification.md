@@ -4,7 +4,7 @@
 
 The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaoke tracks from audio stems and timed lyrics. It previews the result with the same lyric renderer used in The Proper Volume Karaoke Booth, then exports a video or a portable TPV kit.
 
-## Prototype 0.11.0
+## Prototype 0.11.1
 
 ### Implemented
 
@@ -12,7 +12,7 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 - Preview synchronized stems with independent stem gain and master volume.
 - Capture line or word starts at the playhead, with undo, redo, and session cancellation. Set individual timing fields from the context menu or split a line into an editable word draft.
 - Scrub, pan, and zoom at the pointer in a resizable waveform. Move a cue to the playhead while retaining word offsets. Transport can skip back 5 seconds or ahead 10 seconds.
-- Work in a Booth-style workspace with Day and Night appearance, selectable accents, a large singer preview, a resizable editor, and fixed playback controls. [Workspace guide](workspace.md)
+- Work in a Booth-style workspace with Studio's Bouncing Ball icon, Day and Night appearance, selectable accents, a large singer preview, a resizable editor, and fixed playback controls. [Workspace guide](workspace.md)
 - Save a bundled or custom lyric font, font size, leading, casing, colors, and one to four rows. Rows fade out and refill in place. The preview and authored MP4 and CD+G exports share timing for the optional song-progress and countdown bars.
 - Format imported or pasted lyrics with adjustable minimum, target, and maximum line lengths. The formatter leaves timed cues available until the user rebuilds them. [Formatting guide](workspace.md)
 - Force-align supplied lyrics to a selected local audio track with WhisperX. The alignment path does not run speech recognition, generate lyrics, or change supplied text; exact lyric words and line breaks are retained while timings are added.
