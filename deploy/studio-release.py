@@ -34,6 +34,12 @@ LABELS = {
     "macos-x64.dmg": "macOS Intel DMG",
     "macos-x64.zip": "macOS Intel ZIP",
 }
+PLATFORM_LABELS = {"windows-x64": "Windows", "linux-x64": "Linux", "macos-arm64": "Apple silicon Mac", "macos-x64": "Intel Mac"}
+DOWNLOAD_GROUPS = (
+    ("Windows", ("windows-x64",)),
+    ("macOS", ("macos-arm64", "macos-x64")),
+    ("Linux", ("linux-x64",)),
+)
 PREFIX = "tpv-karaoke-studio"
 LIMIT = 450 * 1024 * 1024
 ROOT = Path("/srv/tpv-studio-releases")
@@ -135,47 +141,112 @@ def stage(root, version, commit, platform, stream):
             pending.rename(finished)
 
 
+def download_item(asset, directory="", *, release_version=None):
+    href = escape(f'{directory}{asset["name"]}', quote=True)
+    label = escape(asset["label"])
+    metadata = (f"Version {escape(release_version)}" if release_version is not None
+                else f'{asset["bytes"] / 1024**2:.1f} MiB')
+    return f'<li><a href="{href}" download><strong>{label}</strong><small class="metadata">{metadata}</small></a></li>'
+
+
 def page(manifest, *, index=False, versions=(), older_assets=()):
-    version = manifest["version"]
+    version = escape(manifest["version"])
     relative = f"v{version}/" if index else ""
-    source = manifest["sourceCommit"]
-    files = "\n".join(
-        f'<li><a href="{relative}{asset["name"]}" download>{escape(asset["label"])}</a>'
-        f' <small>{asset["bytes"] / 1024**2:.1f} MiB</small></li>'
-        for asset in manifest["assets"]
-    )
-    history = "".join(f'<li><a href="v{entry}/">Version {entry}</a></li>' for entry in versions if entry != version)
-    available = {asset["platform"] for asset in manifest["assets"]}
-    platform_labels = {"windows-x64": "Windows", "linux-x64": "Linux", "macos-arm64": "Apple silicon Mac", "macos-x64": "Intel Mac"}
-    partial = "<p>Version " + version + " is available for " + ", ".join(
-        name for platform, name in platform_labels.items() if platform in available) + ".</p>" if manifest["partial"] else ""
+    source = escape(manifest["sourceCommit"], quote=True)
+    assets = manifest["assets"]
+    cards = []
+    for heading, platforms in DOWNLOAD_GROUPS:
+        files = "".join(download_item(asset, relative) for asset in assets if asset["platform"] in platforms)
+        if files:
+            cards.append(f'<section class="card"><h2>{heading}</h2><ul class="files">{files}</ul></section>')
+    current_downloads = "\n    ".join(cards)
+    history = "".join(f'<li><a href="v{escape(entry)}/">Version {escape(entry)}</a></li>'
+                      for entry in versions if entry != manifest["version"])
+    available = {asset["platform"] for asset in assets}
+    platform_names = ", ".join(name for platform, name in PLATFORM_LABELS.items() if platform in available)
+    partial = f" Version {version} is available for {platform_names}." if manifest["partial"] else ""
     older = "".join(
-        f'<li><a href="v{escape(release)}/{escape(asset["name"])}" download>{escape(asset["label"])}</a>'
-        f' <small>Version {escape(release)}</small></li>'
+        download_item(asset, f"v{release}/", release_version=release)
         for release, asset in older_assets
     )
     footer = ('<a href="/booth/">Karaoke Booth downloads</a>' if index else '<a href="../">Latest Studio release</a>')
     return f"""<!doctype html>
-<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Karaoke Studio {version} Downloads</title>
-<style>
-  :root {{ color-scheme: light dark; font-family: system-ui, sans-serif; }}
-  body {{ max-width: 46rem; padding: 2rem 1.25rem; margin: 5vh auto; line-height: 1.6; }}
-  li {{ margin-block: .6rem; }}
-</style>
-<h1>The Proper Volume Karaoke Studio</h1>
-<h2>Version {version} · Development preview</h2>
-<p>Download Studio to author karaoke tracks, sync lyrics, and export videos or TPV kits.</p>
-<p>These development builds are unsigned.</p>
-{partial}
-<ul>{files}</ul>
-<p><a href="{relative}SHA256SUMS.txt" download>SHA-256 checksums</a> · <a href="{relative}release-manifest.json">Release manifest</a></p>
-<p><a href="https://github.com/thepropervolume/proper-karaoke-studio/tree/{escape(source)}">Corresponding source code</a></p>
-{f'<h2>Latest builds for other platforms</h2><ul>{older}</ul>' if older else ''}
-{f'<h2>Earlier releases</h2><ul>{history}</ul>' if history else ''}
-<p>{footer} · <a href="/">All downloads</a></p>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Karaoke Studio {version} Downloads · The Proper Volume</title>
+  <link rel="icon" type="image/png" href="/assets/karaoke-studio.png">
+  <link rel="stylesheet" href="/assets/releases.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to downloads</a>
+  <header class="site-header">
+    <div class="shell topbar">
+      <a class="brand" href="/">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="/assets/tpv-wordmark-night.svg">
+          <img src="/assets/tpv-wordmark-day.svg" alt="The Proper Volume" width="144" height="72">
+        </picture>
+      </a>
+      <a href="/">All downloads</a>
+    </div>
+  </header>
+  <main id="main" class="shell">
+    <section class="hero release-hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Version {version} · Development preview</p>
+        <h1>Karaoke Studio</h1>
+        <p class="lede">Author karaoke tracks, sync lyrics, and export videos or TPV kits.</p>
+      </div>
+      <img class="product-icon" src="/assets/karaoke-studio.png" alt="" width="96" height="96">
+    </section>
+    <p class="notice">These development builds are unsigned.{partial}</p>
+    <div class="grid">
+    {current_downloads}
+    </div>
+    <section class="card verification">
+      <h2>Verify this release</h2>
+      <ul class="files">
+        <li><a href="{relative}SHA256SUMS.txt" download><strong>SHA-256 checksums</strong></a></li>
+        <li><a href="{relative}release-manifest.json"><strong>Release manifest</strong></a></li>
+        <li><a href="https://github.com/thepropervolume/proper-karaoke-studio/tree/{source}"><strong>Corresponding source code</strong></a></li>
+      </ul>
+    </section>
+    {f'<section class="card"><h2>Latest builds for other platforms</h2><ul class="files">{older}</ul></section>' if older else ''}
+    {f'<section class="card history"><h2>Earlier releases</h2><ul>{history}</ul></section>' if history else ''}
+  </main>
+  <footer class="shell release-footer">{footer}</footer>
+</body>
 </html>
 """
+
+
+def release_overview(public):
+    versions = sorted(
+        (entry.name[1:] for entry in public.glob("v*") if re.fullmatch(r"v\d+\.\d+\.\d+", entry.name)
+         and (entry / "release-manifest.json").is_file()), key=version_key, reverse=True,
+    )
+    latest = versions[0]
+    manifest = json.loads((public / f"v{latest}" / "release-manifest.json").read_text(encoding="utf-8"))
+    available = {asset["alias"] for asset in manifest["assets"]}
+    older_assets = []
+    # Each missing platform can use its most recent release. Keep the latest
+    # manifest and checksum file tied to just the latest version.
+    if manifest["partial"]:
+        for earlier in versions[1:]:
+            history = json.loads((public / f"v{earlier}" / "release-manifest.json").read_text(encoding="utf-8"))
+            for asset in history["assets"]:
+                if asset["alias"] not in available:
+                    available.add(asset["alias"])
+                    older_assets.append((earlier, asset))
+    return manifest, versions, older_assets
+
+
+def index_page(public):
+    """Render the Studio landing page without updating packages or aliases."""
+    manifest, versions, older_assets = release_overview(public)
+    return page(manifest, index=True, versions=versions, older_assets=older_assets)
 
 
 def publish(root, version, commit, allow_partial=False):
@@ -214,23 +285,10 @@ def publish(root, version, commit, allow_partial=False):
             write_atomic(pending / "SHA256SUMS.txt", "".join(f'{asset["sha256"]}  {asset["name"]}\n' for asset in assets))
             write_atomic(pending / "index.html", page(manifest))
             pending.rename(destination)
-    versions = sorted(
-        (entry.name[1:] for entry in public.glob("v*") if re.fullmatch(r"v\d+\.\d+\.\d+", entry.name)
-         and (entry / "release-manifest.json").is_file()), key=version_key, reverse=True,
-    )
-    latest = versions[0]
-    manifest = json.loads((public / f"v{latest}" / "release-manifest.json").read_text(encoding="utf-8"))
+    manifest, versions, older_assets = release_overview(public)
+    latest = manifest["version"]
     aliases = {asset["alias"]: f'/v{latest}/{asset["name"]}' for asset in manifest["assets"]}
-    older_assets = []
-    # Keep each missing platform's most recent version available under its
-    # existing alias. The newest manifest and checksum file describe one version.
-    if manifest["partial"]:
-        for earlier in versions[1:]:
-            history = json.loads((public / f"v{earlier}" / "release-manifest.json").read_text(encoding="utf-8"))
-            for asset in history["assets"]:
-                if asset["alias"] not in aliases:
-                    aliases[asset["alias"]] = f'/v{earlier}/{asset["name"]}'
-                    older_assets.append((earlier, asset))
+    aliases.update({asset["alias"]: f'/v{earlier}/{asset["name"]}' for earlier, asset in older_assets})
     aliases.update({name: f"/v{latest}/{name}" for name in ("SHA256SUMS.txt", "release-manifest.json")})
     write_atomic(public / ".latest.map", "".join(f"{name} {file}\n" for name, file in aliases.items()))
     write_atomic(public / "index.html", page(manifest, index=True, versions=versions, older_assets=older_assets))

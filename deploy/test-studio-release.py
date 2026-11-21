@@ -46,6 +46,20 @@ class PublishAvailableTest(unittest.TestCase):
             self.assertIn("Version 0.9.0 is available for Windows, Linux.", page)
             self.assertIn("Latest builds for other platforms", page)
             self.assertIn("v0.8.0/tpv-karaoke-studio-0.8.0-macos-x64.dmg", page)
+            self.assertIn('<h2>Windows</h2><ul class="files">', page)
+            self.assertIn('<h2>Linux</h2><ul class="files">', page)
+            self.assertIn('href="v0.9.0/SHA256SUMS.txt"', page)
+            self.assertIn('href="v0.8.0/">Version 0.8.0', page)
+            self.assertEqual(release.index_page(public), page)
+            self.assertEqual((public / ".latest.map").read_text(encoding="utf-8"), aliases)
+
+            version_page = (public / "v0.9.0/index.html").read_text(encoding="utf-8")
+            self.assertIn('href="/assets/releases.css"', version_page)
+            self.assertIn('src="/assets/karaoke-studio.png"', version_page)
+            self.assertIn('href="tpv-karaoke-studio-0.9.0-windows-x64-setup.exe"', version_page)
+            self.assertIn('href="release-manifest.json"', version_page)
+            self.assertIn(f'/tree/{current}"', version_page)
+            self.assertIn('href="../">Latest Studio release', version_page)
             with self.assertRaisesRegex(ValueError, "already exists"):
                 release.publish(root, "0.9.0", "c" * 40, allow_partial=True)
 
