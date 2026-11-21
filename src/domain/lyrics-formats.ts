@@ -1,6 +1,6 @@
 import { parseLrc, parseSrt, toLrc as writeLrc, toSrt as writeSrt } from '@thepropervolume/karaoke-core';
 import type { LyricLine, TimedWord } from './project';
-import { layoutLyrics, lyricFonts, type LyricStyle } from './lyric-style';
+import { layoutLyrics, lyricFontFamily, type LyricStyle } from './lyric-style';
 
 export { parseLrc, parseSrt, parseStamp } from '@thepropervolume/karaoke-core';
 export type LyricsFormat = 'json' | 'lrc' | 'srt';
@@ -51,12 +51,14 @@ export function toLyricsJson(title: string, artist: string, durationSeconds: num
 
 export function toAss(title: string, artist: string, duration: number, lines: readonly LyricLine[], target: 'video' | 'cdg' = 'video', appearance?: LyricStyle): string {
   const esc = (value: string) => value.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}').replace(/\r?\n/g, '\\N');
-  const { width, height, style, entries } = layoutLyrics(lines, duration, appearance, target);
+  const { width, height, style, entries, bars } = layoutLyrics(lines, duration, appearance, target);
   const resolution = 'PlayResX: ' + width + '\nPlayResY: ' + height + '\nScaledBorderAndShadow: yes\nWrapStyle: 2';
-  const assColor = (color: string) => '&H00' + color.slice(5, 7) + color.slice(3, 5) + color.slice(1, 3);
+  const bgr = (color: string) => color.slice(5, 7) + color.slice(3, 5) + color.slice(1, 3);
+  const assColor = (color: string) => '&H00' + bgr(color);
   // libass uses the secondary color before a karaoke syllable's time.
   const palette = [style.highlightColor, style.textColor, style.outlineColor, style.backgroundColor].map(assColor).join(',');
-  const styleLine = 'Style: Default,' + lyricFonts[style.font].family + ',64,' + palette + ',-1,0,1,3,0,5,0,0,0,1\n\n';
+  const styleLine = 'Style: Default,' + lyricFontFamily(style) + ',64,' + palette
+    + ',' + (style.font === 'custom' ? 0 : -1) + ',0,1,3,0,5,0,0,0,1\n\n';
   const header = '[Script Info]\nTitle: ' + esc(title) + ' - ' + esc(artist) + '\nScriptType: v4.00+\n' + resolution + '\n\n' +
     '[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n' +
     styleLine +
@@ -65,14 +67,32 @@ export function toAss(title: string, artist: string, duration: number, lines: re
     const cs = Math.max(0, Math.round(seconds * 100));
     return Math.floor(cs / 360000) + ':' + String(Math.floor(cs / 6000) % 60).padStart(2, '0') + ':' + String(Math.floor(cs / 100) % 60).padStart(2, '0') + '.' + String(cs % 100).padStart(2, '0');
   };
-  const events = entries.map(({ showAt, hideAt, words, centerY, fontSize }) => {
+  const line = (layer: number, start: number, end: number, text: string) =>
+    'Dialogue: ' + layer + ',' + stamp(start) + ',' + stamp(end) + ',Default,,0,0,0,,' + text;
+  const events = entries.map(({ showAt, hideAt, fade, words, centerY, fontSize }) => {
     const position = '{\\an5\\pos(' + width / 2 + ',' + centerY + ')\\fs' + fontSize + '\\bord' + Math.max(.5, fontSize * .0425).toFixed(2) + '}';
     const lyrics = words.map(word => {
       const delay = Math.max(0, Math.round((word.startSeconds - showAt) * 100));
       const span = Math.max(1, Math.round((word.endSeconds - word.startSeconds) * 100));
       return '{\\kt' + delay + '\\kf' + span + '}' + esc(word.text);
     }).join('');
-    return 'Dialogue: 0,' + stamp(showAt) + ',' + stamp(hideAt) + ',Default,,0,0,0,,' + position + lyrics;
+    const fadeMs = Math.round(fade * 1000);
+    return line(0, showAt, hideAt, position + '{\\fad(' + fadeMs + ',' + fadeMs + ')}' + lyrics);
   });
+  const rectangle = (left: number, top: number, right: number, bottom: number, color: string, motion = '') =>
+    '{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H' + bgr(color) + '&' + motion + '\\p1}m '
+      + left + ' ' + top + ' l ' + right + ' ' + top + ' ' + right + ' ' + bottom + ' ' + left + ' ' + bottom + '{\\p0}';
+  for (const bar of bars) {
+    const { x, y, start, end, border, style: colors } = bar;
+    const right = x + bar.width, bottom = y + bar.height;
+    const leftInside = x + border, rightInside = right - border, topInside = y + border, bottomInside = bottom - border;
+    const milliseconds = Math.max(1, Math.round((end - start) * 1000));
+    // libass interpolates a rectangular clip, revealing the fill from left to right.
+    const animated = '\\clip(' + [leftInside, topInside, leftInside, bottomInside].join(',') + ')'
+      + '\\t(0,' + milliseconds + ',\\clip(' + [leftInside, topInside, rightInside, bottomInside].join(',') + '))';
+    if (border) events.push(line(1, start, end, rectangle(x, y, right, bottom, colors.borderColor)));
+    events.push(line(2, start, end, rectangle(leftInside, topInside, rightInside, bottomInside, colors.trackColor)));
+    events.push(line(3, start, end, rectangle(leftInside, topInside, rightInside, bottomInside, colors.fillColor, animated)));
+  }
   return header + events.join('\n') + '\n';
 }
