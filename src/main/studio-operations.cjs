@@ -27,10 +27,12 @@ const separationDefaults = {
   mvsep: { executable: '', model: '40' },
   gaudio: { executable: '', model: 'gsep_music_shq_v1' },
 };
+const { isStudioUpdateMode } = require('../domain/desktop-update-preference.ts');
+
 const defaultSettings = {
   ffmpegPath: 'ffmpeg', separatorAdapter: 'audio-separator', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx',
   lyricAlignerExecutable: '', alignmentLanguage: 'en', lyricFormat: DEFAULT_LYRIC_FORMAT_OPTIONS,
-  uvrModelsPath: '', ensembleModels: [], backingModel: '',
+  uvrModelsPath: '', ensembleModels: [], backingModel: '', updateMode: 'notify',
 };
 const modelId = /^(?!\.{1,2}$)[\w.-]{1,160}$/;
 const isModelId = value => typeof value === 'string' && modelId.test(value);
@@ -91,6 +93,7 @@ function loadSettings(file) {
       uvrModelsPath: typeof value.uvrModelsPath === 'string' && path.isAbsolute(value.uvrModelsPath) ? value.uvrModelsPath : '',
       ensembleModels: Array.isArray(value.ensembleModels) ? [...new Set(value.ensembleModels.filter(isModelId))].slice(0, 3) : [],
       backingModel: isModelId(value.backingModel) ? value.backingModel : '',
+      updateMode: isStudioUpdateMode(value.updateMode) ? value.updateMode : defaultSettings.updateMode,
     };
   } catch { return { ...defaultSettings }; }
 }
@@ -108,7 +111,9 @@ function validateSettings(value) {
     uvrModelsPath: text(value?.uvrModelsPath ?? '', 'UVR models folder', 4096).trim(),
     ensembleModels: value?.ensembleModels ?? [],
     backingModel: text(value?.backingModel ?? '', 'backing-vocal model', 160).trim(),
+    updateMode: value?.updateMode ?? defaultSettings.updateMode,
   };
+  if (!isStudioUpdateMode(result.updateMode)) throw new Error('Choose a supported update preference.');
   if (!isModelId(result.separatorModel)) throw new Error('Model names may contain letters, digits, dots, underscores, and hyphens.');
   if (cloudAdapter(separatorAdapter) && !separatorModels[separatorAdapter].some(model => model.id === result.separatorModel)) throw new Error('Choose an available model for this service.');
   if (result.uvrModelsPath && !path.isAbsolute(result.uvrModelsPath)) throw new Error('Choose an absolute UVR model folder.');

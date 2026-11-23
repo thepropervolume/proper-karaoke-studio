@@ -1,6 +1,17 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('studio', {
   getSettings: () => ipcRenderer.invoke('studio:get-settings'),
+  getUpdateStatus: () => ipcRenderer.invoke('studio:update-status'),
+  setUpdateMode: mode => ipcRenderer.invoke('studio:update-mode', mode),
+  checkForUpdate: () => ipcRenderer.invoke('studio:update-check'),
+  downloadUpdate: () => ipcRenderer.invoke('studio:update-download'),
+  scheduleUpdate: () => ipcRenderer.invoke('studio:update-schedule'),
+  revealUpdate: () => ipcRenderer.invoke('studio:update-reveal'),
+  onUpdateStatus: listener => {
+    const receive = (_event, value) => listener(value);
+    ipcRenderer.on('studio:update-status-changed', receive);
+    return () => ipcRenderer.removeListener('studio:update-status-changed', receive);
+  },
   getStudioShortcuts: () => ipcRenderer.invoke('studio:get-shortcuts'),
   saveStudioShortcuts: value => ipcRenderer.invoke('studio:save-shortcuts', value),
   reloadStudioShortcuts: () => ipcRenderer.invoke('studio:reload-shortcuts'),

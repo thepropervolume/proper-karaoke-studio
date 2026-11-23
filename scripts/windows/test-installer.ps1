@@ -62,6 +62,7 @@ foreach ($scope in 'User', 'Machine') {
     $other = if ($scope -eq 'User') { 'Machine' } else { 'User' }
     $cliDirectory = Join-Path $app 'cli'
     $uninstaller = Join-Path $app $uninstallerName
+    $updateMarker = Join-Path $app 'resources/tpv-studio-install-kind'
     $expectedValue = if ([String]::IsNullOrEmpty($before[$scope].Value)) {
         $cliDirectory
     } else {
@@ -75,6 +76,9 @@ foreach ($scope in 'User', 'Machine') {
         Invoke-StudioInstaller $installer $installArguments
         Assert-StudioPath $scope $expected
         Assert-StudioPath $other $before[$other]
+        if ((Get-Content -LiteralPath $updateMarker -Raw) -cne 'nsis') {
+            throw 'The installed application is missing its NSIS update marker.'
+        }
 
         $sessionPath = $env:Path
         try {

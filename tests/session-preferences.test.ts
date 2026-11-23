@@ -17,6 +17,7 @@ test('session settings survive a second read and saved defaults survive a new se
   assert.equal(starting.separatorAdapter, 'dango');
   assert.equal(starting.separatorModel, '31');
   assert.deepEqual(starting.lyricFormat, DEFAULT_LYRIC_FORMAT_OPTIONS);
+  assert.equal(starting.updateMode, 'notify');
   settings.save({ ...starting, alignmentLanguage: 'es' }, 'session');
   assert.equal(settings.get().alignmentLanguage, 'es');
   assert.equal(settings.defaults().saved.alignmentLanguage, 'en');
@@ -26,4 +27,23 @@ test('session settings survive a second read and saved defaults survive a new se
   settings.save({ ...starting, alignmentLanguage: 'fr' }, 'default');
   assert.equal(JSON.parse(await readFile(file, 'utf8')).alignmentLanguage, 'fr');
   assert.equal(preferences.createSessionPreferences(file).get().alignmentLanguage, 'fr');
+});
+
+test('update mode saves independently of a Studio audio preference session', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'studio-update-settings-test-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, 'settings.json');
+  await writeFile(file, JSON.stringify({ updateMode: 'unknown' }));
+  const settings = preferences.createSessionPreferences(file);
+  const beforeChange = settings.get();
+  assert.equal(beforeChange.updateMode, 'notify');
+  settings.save({ ...beforeChange, alignmentLanguage: 'es' }, 'session');
+  assert.equal(settings.saveUpdateMode('off'), 'off');
+  assert.equal(settings.get().alignmentLanguage, 'es');
+  assert.equal(settings.get().updateMode, 'off');
+  assert.equal(settings.defaults().saved.alignmentLanguage, 'en');
+  assert.equal(settings.defaults().saved.updateMode, 'off');
+  settings.save({ ...beforeChange, alignmentLanguage: 'de' }, 'default');
+  assert.equal(preferences.createSessionPreferences(file).get().updateMode, 'off');
+  assert.throws(() => settings.saveUpdateMode('automatic'), /supported update preference/);
 });

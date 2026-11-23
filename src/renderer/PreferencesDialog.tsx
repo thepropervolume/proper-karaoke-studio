@@ -6,6 +6,7 @@ import { HelpTip } from './HelpTip';
 import { ModelsPanel } from './ModelsPanel';
 import { SplitAction } from './SplitAction';
 import { StudioShortcutPreferences } from './StudioShortcutPreferences';
+import { StudioUpdates } from './StudioUpdates';
 
 const languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
 const languages = alignmentLanguages.map(code => ({ code, name: languageNames.of(code) ?? code }))
@@ -18,7 +19,8 @@ export function preferenceError(cause: unknown) {
 
 type Props = {
   settings: StudioSettings;
-  initialSection?: 'shortcuts';
+  initialSection?: 'shortcuts' | 'updates';
+  updates?: StudioUpdateStatus;
   shortcuts: StudioShortcuts;
   close(): void;
   onSave(settings: StudioSettings, scope: PreferenceScope): void;
@@ -46,9 +48,9 @@ export function PreferenceField({ label, hint, reset, children }: {
   </div>;
 }
 
-export function PreferencesDialog({ settings, initialSection, shortcuts, close, onSave, onSaveShortcuts }: Props) {
+export function PreferencesDialog({ settings, initialSection, updates, shortcuts, close, onSave, onSaveShortcuts }: Props) {
   const [draft, setDraft] = useState(settings);
-  const [section, setSection] = useState<'tools' | 'models' | 'integrations' | 'shortcuts'>(initialSection ?? 'tools');
+  const [section, setSection] = useState<'tools' | 'models' | 'integrations' | 'shortcuts' | 'updates'>(initialSection ?? 'tools');
   const [defaults, setDefaults] = useState<{ saved: StudioSettings; factory: StudioSettings }>();
   const [catalog, setCatalog] = useState<SeparatorCatalog>();
   const [library, setLibrary] = useState<StudioModelLibrary>();
@@ -159,6 +161,7 @@ export function PreferencesDialog({ settings, initialSection, shortcuts, close, 
         <button type="button" aria-pressed={section === 'models'} onClick={() => setSection('models')}>Download Models</button>
         <button type="button" aria-pressed={section === 'integrations'} onClick={() => setSection('integrations')}>Integrations</button>
         <button type="button" aria-pressed={section === 'shortcuts'} onClick={() => setSection('shortcuts')}>Keyboard Shortcuts</button>
+        <button type="button" aria-pressed={section === 'updates'} onClick={() => setSection('updates')}>Updates</button>
       </nav>
       {section === 'tools' ? <form className="stack" onSubmit={submit}>
         <div className="settings-group">
@@ -266,7 +269,8 @@ export function PreferencesDialog({ settings, initialSection, shortcuts, close, 
           {saveControl}
         </div>
         {error && <p className="error" role="alert">{error}</p>}
-      </> : section === 'shortcuts' ? <StudioShortcutPreferences value={shortcuts} onSave={onSaveShortcuts} /> : <IntegrationsPanel />}
+      </> : section === 'shortcuts' ? <StudioShortcutPreferences value={shortcuts} onSave={onSaveShortcuts} /> :
+        section === 'updates' ? <StudioUpdates status={updates} /> : <IntegrationsPanel />}
     </section>
   </div>;
 }

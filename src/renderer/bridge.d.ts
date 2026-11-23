@@ -3,13 +3,14 @@ import type { CustomLyricFont } from '../domain/lyric-style';
 import type { LyricFormatOptions } from '../domain/lyric-format';
 import type { StudioModelLibrary } from '../domain/model-library';
 import type { StudioShortcuts } from '../domain/studio-shortcuts';
+import type { StudioUpdateMode } from '../domain/desktop-update-preference';
 declare global {
   type SeparatorAdapter = 'audio-separator' | 'demucs' | 'dango' | 'mvsep' | 'gaudio';
   type PreferenceScope = 'session' | 'default';
   type StudioSettings = {
     ffmpegPath: string; separatorAdapter: SeparatorAdapter; separatorExecutable: string; separatorModel: string;
     lyricAlignerExecutable: string; alignmentLanguage: string; lyricFormat: LyricFormatOptions;
-    uvrModelsPath: string; ensembleModels: string[]; backingModel: string;
+    uvrModelsPath: string; ensembleModels: string[]; backingModel: string; updateMode: StudioUpdateMode;
   };
   type SeparatorModel = { id: string; label: string; group: string };
   type SeparatorCatalog = { models: SeparatorModel[]; source: 'installed' | 'fallback' | 'provider' };
@@ -28,8 +29,19 @@ declare global {
     editing: boolean; stems: boolean; lyrics: boolean; cdg: boolean; styling: boolean;
     theme: 'day' | 'night'; accent: 'blue' | 'pink' | 'purple';
   };
+  type StudioUpdateStatus = {
+    status: 'idle' | 'unavailable' | 'disabled' | 'current' | 'available' | 'downloaded' | 'checking' | 'downloading' | 'error';
+    mode: StudioUpdateMode; installOnQuit: boolean; scheduled: boolean; version?: string; message?: string;
+  };
   type StudioBridge = {
     getSettings(): Promise<StudioSettings>;
+    getUpdateStatus(): Promise<StudioUpdateStatus>;
+    setUpdateMode(value: StudioUpdateMode): Promise<StudioUpdateStatus>;
+    checkForUpdate(): Promise<StudioUpdateStatus>;
+    downloadUpdate(): Promise<StudioUpdateStatus>;
+    scheduleUpdate(): Promise<StudioUpdateStatus>;
+    revealUpdate(): Promise<StudioUpdateStatus>;
+    onUpdateStatus(listener: (value: StudioUpdateStatus) => void): () => void;
     getStudioShortcuts(): Promise<StudioShortcutState>;
     saveStudioShortcuts(value: StudioShortcuts): Promise<StudioShortcutState>;
     reloadStudioShortcuts(): Promise<StudioShortcutState>;

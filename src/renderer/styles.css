@@ -132,6 +132,7 @@ a { color: var(--accent); }
 .studio-brand small { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
 .topbar-identity { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .topbar-identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.update-badge { flex: none; padding: 4px 7px; font-size: 11px; white-space: nowrap; }
 .version-pill, .summary-pill, .nav-count {
   flex: 0 0 auto;
   border-radius: 999px;

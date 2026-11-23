@@ -17,6 +17,7 @@ import { StudioIcon, type StudioIconName } from './StudioIcon';
 import { WorkspaceSeparator, defaultInspectorWidth, inspectorMax, minInspectorWidth } from './WorkspaceSeparator';
 import { VoiceRecorder } from './VoiceRecorder';
 import { PreferencesDialog, preferenceError } from './PreferencesDialog';
+import { useStudioUpdates } from './StudioUpdates';
 import { useStudioShortcuts } from './useStudioShortcuts';
 import { LyricAppearance } from './LyricAppearance';
 import { paintStudioBars } from './lyric-bars';
@@ -140,11 +141,12 @@ export function App() {
   const [settings, setSettings] = useState<StudioSettings>({
     ffmpegPath: 'ffmpeg', separatorAdapter: 'audio-separator', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx',
     lyricAlignerExecutable: '', alignmentLanguage: 'en', lyricFormat: DEFAULT_LYRIC_FORMAT_OPTIONS,
-    uvrModelsPath: '', ensembleModels: [], backingModel: '',
+    uvrModelsPath: '', ensembleModels: [], backingModel: '', updateMode: 'notify',
   });
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false), [busy, setBusy] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<'shortcuts'>();
+  const [settingsSection, setSettingsSection] = useState<'shortcuts' | 'updates'>();
+  const updates = useStudioUpdates();
   const [shortcuts, saveShortcuts] = useStudioShortcuts();
   const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
   const [cdgPath, setCdgPath] = useState<string | null>(null);
@@ -863,7 +865,7 @@ export function App() {
   const editorInert = projectTransition || recoveryOpen || voiceRecorderOpen || settingsOpen || appearanceOpen || lyricAppearanceOpen;
   const menuEnabled = !editorInert && !busy && !timing;
   const hasStems = stems.length > 0, hasLyrics = lines.length > 0, hasCdg = Boolean(cdgPath), canStyle = !cdgPlayer;
-  const openPreferences = (section?: 'shortcuts') => { setSettingsSection(section); setSettingsOpen(true); };
+  const openPreferences = (section?: 'shortcuts' | 'updates') => { setSettingsSection(section); setSettingsOpen(true); };
   const pickAudio = () => { void window.studio.chooseAudioFiles().then(addLocalPaths).catch(cause => setError(preferenceError(cause))); };
   const pickLyrics = () => { setWorkspace('lyrics'); lyricPicker.current?.click(); };
   const shortcutHint = (label: string, action: StudioShortcutAction) => {
@@ -960,6 +962,9 @@ export function App() {
       <div className="topbar-identity">
         <strong title={fileName || projectTitle}>{projectTitle}</strong>
         <span className="version-pill" aria-label="Application version">v{version}</span>
+        {(updates?.status === 'available' || updates?.status === 'downloaded') && <button type="button" className="update-badge"
+          aria-label={`Studio ${updates.version} ${updates.status === 'downloaded' ? 'ready' : 'available'}`} onClick={() => openPreferences('updates')}>
+          {updates.status === 'downloaded' ? 'Update Ready' : 'Update Available'}</button>}
       </div>
       <div className="topbar-status" role="status">
         <span className={'status-dot' + (playing ? ' live' : '')} aria-hidden="true" />
@@ -1302,7 +1307,7 @@ export function App() {
       </section>
     </div>}
     {/* The dialog takes a draft snapshot when it opens, so wait for saved settings on startup. */}
-    {settingsOpen && settingsLoaded && <PreferencesDialog settings={settings} initialSection={settingsSection}
+    {settingsOpen && settingsLoaded && <PreferencesDialog settings={settings} initialSection={settingsSection} updates={updates}
       shortcuts={shortcuts} onSaveShortcuts={saveShortcuts} close={() => setSettingsOpen(false)} onSave={(value, scope) => {
       setSettings(value); setSettingsOpen(false); setStatus(scope === 'session' ? 'Preferences applied for this session.' : 'Default preferences saved.');
     }} />}

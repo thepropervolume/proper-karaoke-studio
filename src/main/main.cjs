@@ -1,6 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, shell, systemPreferences } = require('electron');
 const fs = require('node:fs/promises');
-const { rmSync } = require('node:fs');
+const { readFileSync, rmSync } = require('node:fs');
 const { randomUUID } = require('node:crypto');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -23,6 +23,8 @@ const { bindingFromStudioKey } = require('../domain/studio-shortcuts.ts');
 const { createModelLibrary } = require('./model-library.cjs');
 const { createFontLibrary, describeLyricFont } = require('./lyric-fonts.cjs');
 const { cloudSeparators } = require('./cloud-separators.cjs');
+const { createDesktopUpdater } = require('@thepropervolume/karaoke-core/desktop-updates');
+const { createStudioUpdates } = require('./studio-updates.cjs');
 
 // Files are served to the renderer through random one-session URLs, never file:// URLs.
 protocol.registerSchemesAsPrivileged([{
@@ -40,6 +42,10 @@ let recordingShortcut = false;
 let recovery;
 let quitting = false;
 let microphoneExpiresAt = 0;
+let updates;
+let finishingUpdateHandoff = false;
+let recoverySavedForQuit = true;
+let projectOperations = 0;
 
 function editorUrl() {
   return process.env.VITE_DEV_SERVER_URL || pathToFileURL(path.join(__dirname, '..', 'dist', 'index.html')).href;
@@ -60,6 +66,14 @@ function handleEditor(channel, action) {
     if (!isEditorFrame(event)) throw new Error('Only the Studio editor can perform this action.');
     return action(event, input);
   });
+}
+
+function trackProjectOperation(action) {
+  return async (...args) => {
+    projectOperations++;
+    try { return await action(...args); }
+    finally { projectOperations--; }
+  };
 }
 
 function alignmentProgress(event) {
@@ -150,6 +164,51 @@ function configurePermissions(session) {
 function settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
 function shortcutsPath() { return path.join(app.getPath('userData'), 'keybindings.json'); }
 
+function updateTarget() {
+  if (process.platform === 'win32') {
+    try {
+      if (readFileSync(path.join(process.resourcesPath, 'tpv-studio-install-kind'), 'utf8') === 'nsis') return { kind: 'nsis' };
+    } catch { /* The portable ZIP has no installer marker. */ }
+    return { kind: 'zip' };
+  }
+  if (process.platform === 'darwin') return { kind: 'dmg' };
+  if (process.platform === 'linux') return process.env.APPIMAGE
+    ? { kind: 'appimage', appImage: process.env.APPIMAGE } : { kind: 'deb' };
+  return {};
+}
+
+function registerUpdates(preferences) {
+  const mode = preferences.get().updateMode;
+  const target = app.isPackaged ? updateTarget() : {};
+  let updater;
+  if (target.kind) {
+    try {
+      updater = createDesktopUpdater({
+        product: 'studio', runningVersion: app.getVersion(), cacheDirectory: path.join(app.getPath('userData'), 'updates'),
+        mode, preferredKind: target.kind,
+      });
+    } catch { console.warn('Studio update checks are unavailable.'); }
+  }
+  updates = createStudioUpdates({
+    updater, mode, saveMode: value => preferences.saveUpdateMode(value), canInstallOnQuit: !!updater && target.kind !== 'zip',
+    appImage: target.appImage,
+    publish: state => {
+      if (isEditorContents(mainWindow?.webContents)) mainWindow.webContents.send('studio:update-status-changed', state);
+    },
+    reveal: file => shell.showItemInFolder(file),
+    handoff: async (file, kind) => {
+      if (kind !== target.kind || !['nsis', 'dmg', 'deb'].includes(kind) || await shell.openPath(file))
+        throw new Error('Studio could not open the verified installer.');
+    },
+  });
+  handleEditor('studio:update-status', () => updates.snapshot());
+  handleEditor('studio:update-mode', (_event, value) => updates.setMode(value));
+  handleEditor('studio:update-check', () => updates.check(true));
+  handleEditor('studio:update-download', () => updates.download());
+  handleEditor('studio:update-schedule', () => updates.schedule());
+  handleEditor('studio:update-reveal', () => updates.revealDownloaded());
+}
+
 function bindStudioShortcuts(window) {
   recordingShortcut = false;
   window.webContents.on('before-input-event', (_event, input) => {
@@ -175,6 +234,7 @@ async function openProject(file) {
 function createWindow() {
   const recoveryDirectory = path.join(app.getPath('userData'), 'recovery');
   recovery = createRecoveryStore(recoveryDirectory);
+  recoverySavedForQuit = true;
   mainWindow = new BrowserWindow({
     width: 1440, height: 940, minWidth: 1050, minHeight: 680,
     title: 'The Proper Volume Karaoke Studio', backgroundColor: '#090e18', icon: brandIcon(),
@@ -192,7 +252,10 @@ function createWindow() {
     event.preventDefault();
     if (waitingForRecovery) return;
     waitingForRecovery = true;
-    void recovery.flush().catch(error => console.error('Could not save the recovery draft:', error)).finally(() => {
+    void recovery.flush().catch(error => {
+      recoverySavedForQuit = false;
+      console.error('Could not save the recovery draft:', error);
+    }).finally(() => {
       closing = true;
       if (quitting) app.quit();
       else if (!window.isDestroyed()) window.close();
@@ -212,6 +275,7 @@ app.whenReady().then(() => {
   handleEditor('studio:update-menu', (_event, state) => updateStudioMenu(state ?? {}));
   protocol.handle('studio-media', request => serveStudioMedia(request, media.get(new URL(request.url).hostname)));
   const preferences = createSessionPreferences(settingsPath());
+  registerUpdates(preferences);
   shortcuts = createStudioShortcuts(shortcutsPath());
   const publishShortcuts = (event, state) => {
     event.sender.send('studio:shortcuts-changed', state);
@@ -296,23 +360,23 @@ app.whenReady().then(() => {
     const { file, project } = await importKit(source, destination);
     return { file, project, revision: projectRevision(project) };
   });
-  ipcMain.handle('studio:save-project', async (_event, { project, opened }) => {
+  ipcMain.handle('studio:save-project', trackProjectOperation(async (_event, { project, opened }) => {
     const file = opened?.file || await chooseSave((String(project.title || 'Untitled').replace(/[\\/:*?"<>|]/g, '').trim() || 'Untitled') + '.tpv.json', 'Studio Project', 'json');
     if (!file) return null;
     if (opened && (!path.isAbsolute(file) || !/^[a-f0-9]{64}$/.test(opened.revision))) throw new Error('The project needs to be reopened before saving.');
     const saved = await saveProject(file, project, { expectedRevision: opened?.revision });
     return { file, project: saved, revision: projectRevision(saved) };
-  });
+  }));
   ipcMain.handle('studio:register-media', async (_event, value) => {
     return mediaUrl(await localFile(value, new Set([...AUDIO_EXTENSIONS, ...BACKGROUND_EXTENSIONS])));
   });
   handleEditor('studio:register-backdrop', (_event, file) => registerBackdrop(file, preferences.get().ffmpegPath));
   handleEditor('studio:timing-context-menu', (_event, context) => timingContextMenu(mainWindow, context));
   ipcMain.handle('studio:read-cdg', (_event, value) => readCdg(value));
-  ipcMain.handle('studio:export-cdg', async (_event, input) => {
+  ipcMain.handle('studio:export-cdg', trackProjectOperation(async (_event, input) => {
     const destination = await chooseSave(text(input.name, 'CD+G name', 180) + '.cdg', 'CD+G Graphics', 'cdg');
     return destination ? exportCdg(input, destination) : null;
-  });
+  }));
   ipcMain.handle('studio:choose-audio', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile', 'multiSelections'], filters: [{ name: 'Audio', extensions: [...AUDIO_EXTENSIONS].map(ext => ext.slice(1)) }] });
     return result.canceled ? [] : result.filePaths;
@@ -356,18 +420,18 @@ app.whenReady().then(() => {
     await fs.writeFile(destination, content, 'utf8');
     return destination;
   });
-  ipcMain.handle('studio:export-kit', async (_event, input) => {
+  ipcMain.handle('studio:export-kit', trackProjectOperation(async (_event, input) => {
     const destination = await chooseSave(text(input.name, 'kit name', 180) + '.tpvkit', 'TPV Karaoke Kit', 'tpvkit');
     if (!destination) return null;
     return exportKit(input, destination);
-  });
-  ipcMain.handle('studio:export-video', async (_event, input) => {
+  }));
+  ipcMain.handle('studio:export-video', trackProjectOperation(async (_event, input) => {
     const destination = await chooseSave(text(input.name, 'video name', 180) + '.mp4', 'MP4 Video', 'mp4');
     if (!destination) return null;
     return exportVideo(input, destination);
-  });
+  }));
   let separationBusy = false;
-  handleEditor('studio:separate', async (event, input) => {
+  handleEditor('studio:separate', trackProjectOperation(async (event, input) => {
     if (separationBusy) throw new Error('Stem separation is already running.');
     separationBusy = true;
     try {
@@ -401,8 +465,8 @@ app.whenReady().then(() => {
         ? await separateWithDango({ ...options, modelOptions: model === '31' ? { separateBackingVocals: true } : {} })
         : await cloudSeparators[adapter].separate(options);
     } finally { separationBusy = false; }
-  });
-  handleEditor('studio:align-lyrics', (event, input) => {
+  }));
+  handleEditor('studio:align-lyrics', trackProjectOperation((event, input) => {
     const script = app.isPackaged
       ? path.join(process.resourcesPath, 'scripts', 'align_lyrics.py')
       : path.join(app.getAppPath(), 'scripts', 'align_lyrics.py');
@@ -412,12 +476,23 @@ app.whenReady().then(() => {
       report({ phase: 'aligning', message: 'Synchronizing lyrics locally. The first run downloads the language model…' });
       return executable;
     });
-  });
+  }));
   createWindow();
+  void updates.check();
 });
 
 app.on('before-quit', () => { quitting = true; });
-app.on('will-quit', () => {
+app.on('will-quit', event => {
+  if (!finishingUpdateHandoff && recoverySavedForQuit && projectOperations === 0 && updates?.canHandoffOnQuit()) {
+    event.preventDefault();
+    finishingUpdateHandoff = true;
+    // Electron has closed the editor and its recovery write has settled.
+    // Continue an existing user quit after the verified installer handoff.
+    void updates.handoffOnQuit().catch(() => console.error('Studio could not apply the verified update.'))
+      .finally(() => app.quit());
+    return;
+  }
+  updates?.cancel();
   void gifDirectory?.then(directory => {
     const parent = path.resolve(app.getPath('temp'));
     if (path.dirname(directory) === parent && path.basename(directory).startsWith('tpv-studio-backdrops-')) {
@@ -426,4 +501,4 @@ app.on('will-quit', () => {
   }).catch(() => {});
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+app.on('activate', () => { if (!quitting && BrowserWindow.getAllWindows().length === 0) createWindow(); });

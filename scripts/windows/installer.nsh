@@ -14,8 +14,16 @@
 
 !macro customInstall
   !insertmacro UpdateStudioCliPath "add"
+  ; Differentiate an installed copy from the portable ZIP without guessing
+  ; the user's installation directory or registry scope.
+  ClearErrors
+  FileOpen $0 "$INSTDIR\resources\tpv-studio-install-kind" w
+  IfErrors +3
+    FileWrite $0 "nsis"
+    FileClose $0
 !macroend
 
 !macro customUnInstall
   !insertmacro UpdateStudioCliPath "remove"
+  Delete "$INSTDIR\resources\tpv-studio-install-kind"
 !macroend

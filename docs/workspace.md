@@ -15,6 +15,8 @@ In **Preferences**, **Save Session Settings** applies changes until Studio close
 
 Use **Preferences → Keyboard Shortcuts** to assign shortcuts and open both JSON files in the file manager. [Keyboard shortcut guide](keyboard-shortcuts.md)
 
+Use **Preferences → Updates** to choose update behavior or check for a new version. Studio saves that setting when you choose it. A verified installer can wait until you quit. [Studio updates](releases.md#update-studio)
+
 Drag the divider beside the inspector to resize it. When focused, the divider also accepts the Left and Right arrows. Double-click to restore the default width. Set the app's Day or Night theme and blue, pink, or purple accent from **View** or the toolbar palette. Studio remembers the selected app appearance and inspector width on this computer.
 
 Studio ships the same bold Liberation fonts for preview and export. Backdrop media fills and crops to 16:9 in both. GIF preview uses the FFmpeg path in Preferences. CD+G keeps its standard resolution and limited color palette. [Liberation Fonts license](../public/lyric-fonts/LICENSE)

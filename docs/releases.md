@@ -12,6 +12,14 @@ The Windows installer registers `tpv-karaoke-studio` on PATH for the selected in
 
 Keep project media beside your editable project or back it up in a TPV kit before switching machines. On supported platforms, Studio sets up its AI Sync runtime on demand. Local stem separation and video export use separately installed tools.
 
+## Update Studio
+
+Open **Preferences → Updates**. Studio saves the selection immediately. **Notify Me on Startup** is the default. Choose **Download Automatically** to prepare the update, **Install on Quit** to apply it after you close Studio, or **Turn Off Automatic Checks** to check manually. **Check for Updates** is available in every mode on packaged builds.
+
+Karaoke Core verifies the signed release manifest and the selected download. Studio checks the file again before handing it to the operating system. A prepared update waits for a normal quit after Studio saves its recovery draft. Closing the editor window on macOS can leave Studio running. Use **Quit Studio** to exit the application.
+
+Windows setup, Debian packages, and macOS disk images use the platform's installer or package flow and may require approval. AppImage builds replace their own executable when the file and its directory allow a safe replacement. Portable Windows ZIPs can download and reveal a verified replacement for manual installation.
+
 ## Build locally
 
 Use Node.js 24 and the native operating system for each package. Use the same clean Git commit for every platform. Set the release version in `package.json` and `package-lock.json` before building. Linux packaging needs `dpkg` and `fakeroot`.

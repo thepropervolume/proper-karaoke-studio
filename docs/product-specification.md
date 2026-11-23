@@ -4,7 +4,7 @@
 
 The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaoke tracks from audio stems and timed lyrics. It previews the result with the same lyric renderer used in The Proper Volume Karaoke Booth, then exports a video or a portable TPV kit.
 
-## Prototype 0.11.2
+## Prototype 0.11.3
 
 ### Implemented
 
@@ -25,6 +25,7 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 - Download verified model weights or reuse local Ultimate Vocal Remover models. Audio Separator ensembles can combine models and split the result into lead, backing, and instrumental tracks. [Model library](models.md)
 - Manage encrypted credentials for Dango AI, MVSEP, and GAUDIO. Review and approve each cloud stem-separation request. Custom entries store credentials for other services.
 - Apply Preferences for this session or save them as defaults. Reset individual fields to the saved defaults. Assign keyboard shortcuts and open the JSON preferences and keybindings files from Studio.
+- Check for desktop updates using Karaoke Core's signed release feed. Preferences can report available versions, download and verify them, prepare installation at normal quit, or turn off automatic checks. Studio finishes its existing project-recovery write before handing off a prepared installer. [Update behavior](releases.md#update-studio)
 - Record a microphone take, audition the take, and save it as a labeled local WAV stem from the [desktop editor](voice-recording.md).
 - Open and save editable Studio projects in one shared file format for the desktop editor and CLI.
 - Keep local snapshots of unsaved desktop edits and pending lyric text. [Project recovery](project-recovery.md) restores these snapshots after reopening Studio.
@@ -59,7 +60,7 @@ A TPV kit is a ZIP archive containing manifest.json, lyrics/lyrics.json, lyrics/
 
 ## Shared-code boundary
 
-Studio uses Karaoke Core 0.1.1 for provider-neutral timing and LRC/SRT interchange. Studio currently pins a copy of Booth's Web Audio player and canvas lyric renderer. The shared package can absorb provider-neutral audio and rendering interfaces once both apps can consume them. Application shells, providers, project files, and packaging belong in the respective apps.
+Studio uses Karaoke Core 0.1.2 for provider-neutral timing, LRC/SRT interchange, and verified desktop updates. Studio currently pins a copy of Booth's Web Audio player and canvas lyric renderer. The shared package can absorb provider-neutral audio and rendering interfaces once both apps can consume them. Application shells, providers, project files, and packaging belong in the respective apps.
 
 ## AI lyric synchronization
 
