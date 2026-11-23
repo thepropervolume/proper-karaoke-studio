@@ -42,6 +42,20 @@ function updateMessage(status: StudioUpdateStatus) {
   }
 }
 
+export function StudioUpdateNotice({ status, hidden, review }: {
+  status?: StudioUpdateStatus; hidden: boolean; review(): void;
+}) {
+  const [dismissed, setDismissed] = useState<string>();
+  if (hidden || !status?.version || status.version === dismissed || status.mode === 'off'
+    || (status.status !== 'available' && status.status !== 'downloaded')) return null;
+  const version = status.version;
+  return <aside className="update-notice" aria-label="Studio update">
+    <span role="status">{updateMessage(status)}</span>
+    <button type="button" className="primary" onClick={() => { setDismissed(version); review(); }}>Review Update</button>
+    <button type="button" onClick={() => setDismissed(version)}>Dismiss</button>
+  </aside>;
+}
+
 export function StudioUpdates({ status }: { status?: StudioUpdateStatus }) {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');

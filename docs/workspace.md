@@ -15,9 +15,9 @@ Studio uses Booth’s navigation rail, application mark, appearance colors, and 
 
 In **Preferences**, **Save Session Settings** applies changes until Studio closes. Open its caret menu and choose **Save as Default Settings** to reuse them at the next launch. Individual Reset buttons restore saved defaults. Use **Restore Factory Settings** to bring back the shipped values, then choose a save scope.
 
-Use **Preferences → Keyboard Shortcuts** to assign shortcuts and open both JSON files in the file manager. [Keyboard shortcut guide](keyboard-shortcuts.md)
+Use **Help → Documentation** to open the bundled guides. **Help → Keyboard Shortcuts** opens the preferences for assigning shortcuts and opening the JSON files. [Keyboard shortcut guide](keyboard-shortcuts.md)
 
-Use **Preferences → Updates** to choose update behavior or check for a new version. Studio saves that setting when you choose it. A verified installer can wait until you quit. [Studio updates](releases.md#update-studio)
+Use **Help → Check for Updates** to check immediately. Choose and save the startup behavior in **Preferences → Updates**. A verified installer can wait until you quit. [Studio updates](releases.md#update-studio)
 
 Drag the divider beside the inspector to resize it. When focused, the divider also accepts the Left and Right arrows. Double-click to restore the default width. Set the app's Day or Night theme and blue, pink, or purple accent from **View** or the toolbar palette. Studio remembers the selected app appearance and inspector width on this computer.
 

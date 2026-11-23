@@ -14,7 +14,11 @@ Keep project media beside your editable project or back it up in a TPV kit befor
 
 ## Update Studio
 
-Open **Preferences → Updates**. Studio saves the selection immediately. **Notify Me on Startup** is the default. Choose **Download Automatically** to prepare the update, **Install on Quit** to apply it after you close Studio, or **Turn Off Automatic Checks** to check manually. **Check for Updates** is available in every mode on packaged builds.
+Open **Preferences → Updates**. Studio saves the selection immediately. **Notify Me on Startup** is the default. When an automatic check finds a new version, Studio shows a dismissible update notice below the toolbar. Choose **Download Automatically** to prepare the update, **Install on Quit** to apply it after you close Studio, or **Turn Off Automatic Checks** to check manually. **Help → Check for Updates** checks immediately and shows the result in Preferences in every mode on packaged builds.
+
+### Find Studio in desktop search
+
+After installation, search for **The Proper Volume Karaoke Studio** by name. Studio also supplies TPV, Proper Volume, Karaoke Studio, Lyrics, Synchronize, LRC, CDG, SRT, and related terms to platform launchers. Search matches depend on the platform’s index and launcher. AppImage launchers need desktop integration to register the entry.
 
 Karaoke Core verifies the signed release manifest and the selected download. Studio checks the file again before handing it to the operating system. A prepared update waits for a normal quit after Studio saves its recovery draft. Closing the editor window on macOS can leave Studio running. Use **Quit Studio** to exit the application.
 

@@ -16,9 +16,12 @@ export function preferenceError(cause: unknown) {
     .replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
 }
 
+export type StudioPreferenceSection = 'tools' | 'models' | 'integrations' | 'shortcuts' | 'updates';
+
 type Props = {
   settings: StudioSettings;
-  initialSection?: 'shortcuts' | 'updates';
+  section: StudioPreferenceSection;
+  setSection(section: StudioPreferenceSection): void;
   updates?: StudioUpdateStatus;
   shortcuts: StudioShortcuts;
   close(): void;
@@ -47,9 +50,8 @@ export function PreferenceField({ label, hint, reset, children }: {
   </div>;
 }
 
-export function PreferencesDialog({ settings, initialSection, updates, shortcuts, close, onSave, onSaveShortcuts }: Props) {
+export function PreferencesDialog({ settings, section, setSection, updates, shortcuts, close, onSave, onSaveShortcuts }: Props) {
   const [draft, setDraft] = useState(settings);
-  const [section, setSection] = useState<'tools' | 'models' | 'integrations' | 'shortcuts' | 'updates'>(initialSection ?? 'tools');
   const [defaults, setDefaults] = useState<{ saved: StudioSettings; factory: StudioSettings }>();
   const [catalog, setCatalog] = useState<SeparatorCatalog>();
   const [library, setLibrary] = useState<StudioModelLibrary>();

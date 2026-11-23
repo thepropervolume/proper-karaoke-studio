@@ -1,4 +1,5 @@
 const { Menu } = require('electron');
+const { openDocumentationWindow } = require('./documentation-window.cjs');
 
 function createStudioMenu(window) {
   const action = (id, label) => ({
@@ -32,7 +33,6 @@ function createStudioMenu(window) {
       { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
       { type: 'separator' },
       action('preferences', 'Preferences…'),
-      action('keybindings', 'Keyboard Shortcuts…'),
     ] },
     { label: 'View', submenu: [
       action('appearance', 'App Appearance…'),
@@ -48,6 +48,11 @@ function createStudioMenu(window) {
       } },
       ...(mac ? [{ role: 'front' }] : []),
     ] },
+    { label: 'Help', role: 'help', submenu: [
+      { id: 'documentation', label: 'Documentation', click: () => void openDocumentationWindow(window) },
+      action('keybindings', 'Keyboard Shortcuts'),
+      action('check-for-updates', 'Check for Updates'),
+    ] },
   ]);
   Menu.setApplicationMenu(menu);
   const enable = (ids, value) => {
@@ -56,7 +61,8 @@ function createStudioMenu(window) {
   return (state = {}) => {
     const editing = state.editing === true;
     const stems = editing && state.stems === true, lyrics = editing && state.lyrics === true, cdg = editing && state.cdg === true;
-    enable(['open', 'save', 'save-as', 'preferences', 'keybindings', 'appearance', 'theme-day', 'theme-night', 'accent-blue', 'accent-pink', 'accent-purple'], editing);
+    enable(['open', 'save', 'save-as', 'preferences', 'appearance', 'theme-day', 'theme-night', 'accent-blue', 'accent-pink', 'accent-purple'], editing);
+    enable(['keybindings', 'check-for-updates'], state.help === true);
     enable(['export'], stems || lyrics || cdg);
     enable(['export-mp4', 'export-kit'], stems);
     enable(['export-cdg', 'export-lrc', 'export-srt', 'export-json'], lyrics);

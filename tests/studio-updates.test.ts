@@ -2,7 +2,10 @@
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import desktop from '../src/main/studio-updates.cjs';
+import { StudioUpdateNotice } from '../src/renderer/StudioUpdates';
 
 function fixture(mode: 'off' | 'notify' | 'download' | 'install' = 'notify', kind = 'nsis', canInstallOnQuit = true) {
   const calls: string[] = [], received: unknown[] = [];
@@ -41,7 +44,7 @@ function fixture(mode: 'off' | 'notify' | 'download' | 'install' = 'notify', kin
   return { service, calls, received };
 }
 
-test('notify mode checks silently and manual installation is only armed by an explicit choice', async () => {
+test('notify mode announces an available version and only arms manual installation by explicit choice', async () => {
   const { service, calls, received } = fixture();
   assert.equal((await service.check()).status, 'available');
   assert.deepEqual(calls, ['check']);
@@ -56,6 +59,18 @@ test('notify mode checks silently and manual installation is only armed by an ex
   assert.deepEqual(calls, ['check', 'download', 'verify', 'reveal', 'verify', 'handoff']);
   assert.equal(await service.handoffOnQuit(), false);
   assert.doesNotMatch(JSON.stringify(received), /verified-installer|artifact/);
+});
+
+test('the editor shows a version-specific automatic update notice and lets the user review or dismiss it', () => {
+  const status: StudioUpdateStatus = { status: 'available', version: '0.11.7', mode: 'notify', installOnQuit: true, scheduled: false };
+  const render = (value: StudioUpdateStatus, hidden = false) =>
+    renderToStaticMarkup(createElement(StudioUpdateNotice, { status: value, hidden, review() {} }));
+  assert.match(render(status), /role="status">Studio 0\.11\.7 is available/);
+  assert.match(render(status), /Review Update.*Dismiss/);
+  assert.match(render({ ...status, mode: 'install', status: 'downloaded', scheduled: true }), /when you quit/);
+  assert.equal(render({ ...status, mode: 'off' }), '');
+  assert.equal(render({ ...status, version: undefined, status: 'current' }), '');
+  assert.equal(render(status, true), '');
 });
 
 test('install mode waits for quit and AppImage applies through the shared verifier', async () => {

@@ -18,8 +18,8 @@ import { WaveformTimeline } from './WaveformTimeline';
 import { StudioIcon, type StudioIconName } from './StudioIcon';
 import { WorkspaceSeparator, defaultInspectorWidth, inspectorMax, minInspectorWidth } from './WorkspaceSeparator';
 import { VoiceRecorder } from './VoiceRecorder';
-import { PreferencesDialog, preferenceError } from './PreferencesDialog';
-import { useStudioUpdates } from './StudioUpdates';
+import { PreferencesDialog, preferenceError, type StudioPreferenceSection } from './PreferencesDialog';
+import { StudioUpdateNotice, useStudioUpdates } from './StudioUpdates';
 import { useStudioShortcuts } from './useStudioShortcuts';
 import { LyricAppearance } from './LyricAppearance';
 import { paintStudioBars } from './lyric-bars';
@@ -151,7 +151,7 @@ export function App() {
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const aligner = alignmentEngines[settings.alignmentEngine];
   const [settingsOpen, setSettingsOpen] = useState(false), [busy, setBusy] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<'shortcuts' | 'updates'>();
+  const [settingsSection, setSettingsSection] = useState<StudioPreferenceSection>('tools');
   const updates = useStudioUpdates();
   const [shortcuts, saveShortcuts] = useStudioShortcuts();
   const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
@@ -898,8 +898,9 @@ export function App() {
 
   const editorInert = projectTransition || recoveryOpen || voiceRecorderOpen || settingsOpen || appearanceOpen || lyricAppearanceOpen;
   const menuEnabled = !editorInert && !busy && !timing;
+  const helpEnabled = settingsLoaded && !projectTransition && !recoveryOpen && !voiceRecorderOpen && !appearanceOpen && !lyricAppearanceOpen;
   const hasStems = stems.length > 0, hasLyrics = lines.length > 0, hasCdg = Boolean(cdgPath), canStyle = !cdgPlayer;
-  const openPreferences = (section?: 'shortcuts' | 'updates') => { setSettingsSection(section); setSettingsOpen(true); };
+  const openPreferences = (section: StudioPreferenceSection = 'tools') => { setSettingsSection(section); setSettingsOpen(true); };
   const pickAudio = () => { void window.studio.chooseAudioFiles().then(addLocalPaths).catch(cause => setError(preferenceError(cause))); };
   const pickLyrics = () => { setWorkspace('lyrics'); lyricPicker.current?.click(); };
   const shortcutHint = (label: string, action: StudioShortcutAction) => {
@@ -908,13 +909,20 @@ export function App() {
   };
   const menuAction = useRef<(action: StudioMenuAction) => void>(() => {});
   menuAction.current = action => {
+    if (action === 'keybindings' || action === 'check-for-updates') {
+      if (!helpEnabled) return;
+      openPreferences(action === 'keybindings' ? 'shortcuts' : 'updates');
+      if (action === 'check-for-updates') {
+        void window.studio.checkForUpdate().catch(cause => setError(preferenceError(cause)));
+      }
+      return;
+    }
     if (!menuEnabled) return;
     switch (action) {
       case 'open': void openProject(); break;
       case 'save': void saveProject(); break;
       case 'save-as': void saveProject(true); break;
       case 'preferences': openPreferences(); break;
-      case 'keybindings': openPreferences('shortcuts'); break;
       case 'appearance': setAppearanceOpen(true); break;
       case 'lyrics-style': if (canStyle) setLyricAppearanceOpen(true); break;
       case 'theme-day': setAppearance(current => ({ ...current, theme: 'day' })); break;
@@ -933,9 +941,9 @@ export function App() {
   };
   useEffect(() => window.studio.onMenuAction(action => menuAction.current(action)), []);
   useEffect(() => {
-    void window.studio.updateMenu({ editing: menuEnabled, stems: hasStems, lyrics: hasLyrics, cdg: hasCdg, styling: canStyle,
+    void window.studio.updateMenu({ editing: menuEnabled, help: helpEnabled, stems: hasStems, lyrics: hasLyrics, cdg: hasCdg, styling: canStyle,
       theme: appearance.theme, accent: appearance.accent }).catch(() => { /* Toolbar actions remain available. */ });
-  }, [menuEnabled, hasStems, hasLyrics, hasCdg, canStyle, appearance.theme, appearance.accent]);
+  }, [menuEnabled, helpEnabled, hasStems, hasLyrics, hasCdg, canStyle, appearance.theme, appearance.accent]);
   const handleShortcut = useRef<(event: KeyboardEvent) => void>(() => {});
   handleShortcut.current = event => {
     if (editorInert || busy) return;
@@ -1014,6 +1022,7 @@ export function App() {
       </div>
     </header>
 
+    <StudioUpdateNotice status={updates} hidden={editorInert} review={() => openPreferences('updates')} />
     <main className="studio-workspace" inert={editorInert}>
       <nav className="sidebar" aria-label="Workspace">
         <div className="eyebrow">Workspace</div>
@@ -1349,7 +1358,7 @@ export function App() {
       </section>
     </div>}
     {/* The dialog takes a draft snapshot when it opens, so wait for saved settings on startup. */}
-    {settingsOpen && settingsLoaded && <PreferencesDialog settings={settings} initialSection={settingsSection} updates={updates}
+    {settingsOpen && settingsLoaded && <PreferencesDialog settings={settings} section={settingsSection} setSection={setSettingsSection} updates={updates}
       shortcuts={shortcuts} onSaveShortcuts={saveShortcuts} close={() => setSettingsOpen(false)} onSave={(value, scope) => {
       setSettings(value); setSettingsOpen(false); setStatus(scope === 'session' ? 'Preferences applied for this session.' : 'Default preferences saved.');
     }} />}

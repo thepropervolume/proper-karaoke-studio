@@ -239,7 +239,7 @@ async function openProject(file) {
   const project = await loadProject(file);
   return { file, project, revision: projectRevision(project) };
 }
-function createWindow() {
+function createWindow({ checkForUpdates = false } = {}) {
   const recoveryDirectory = path.join(app.getPath('userData'), 'recovery');
   recovery = createRecoveryStore(recoveryDirectory);
   recoverySavedForQuit = true;
@@ -268,6 +268,10 @@ function createWindow() {
       if (quitting) app.quit();
       else if (!window.isDestroyed()) window.close();
     });
+  });
+  // Start once, after the initial editor can receive update status.
+  if (checkForUpdates) window.webContents.once('did-finish-load', () => {
+    if (isEditorContents(window.webContents)) void updates.check();
   });
   if (process.env.VITE_DEV_SERVER_URL) mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
@@ -507,8 +511,7 @@ app.whenReady().then(() => {
       }, engine);
     } finally { alignmentBusy = false; }
   }));
-  createWindow();
-  void updates.check();
+  createWindow({ checkForUpdates: true });
 });
 
 app.on('before-quit', () => { quitting = true; });

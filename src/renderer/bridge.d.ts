@@ -24,11 +24,11 @@ declare global {
   type StudioProjectOrigin = { file: string; revision: string };
   type StudioRecoveryDraft = { project: StudioProject; origin: StudioProjectOrigin | null; lyricsDraft: string | null };
   type StudioRecoveryEntry = { id: string; savedAt: number; title: string; artist: string; sourceFile: string | null };
-  type StudioMenuAction = 'open' | 'save' | 'save-as' | 'preferences' | 'keybindings' | 'appearance' | 'lyrics-style'
+  type StudioMenuAction = 'open' | 'save' | 'save-as' | 'preferences' | 'keybindings' | 'check-for-updates' | 'appearance' | 'lyrics-style'
     | 'theme-day' | 'theme-night' | 'accent-blue' | 'accent-pink' | 'accent-purple'
     | 'export-mp4' | 'export-kit' | 'export-cdg' | 'export-cdg-original' | 'export-lrc' | 'export-srt' | 'export-json';
   type StudioMenuState = {
-    editing: boolean; stems: boolean; lyrics: boolean; cdg: boolean; styling: boolean;
+    editing: boolean; help: boolean; stems: boolean; lyrics: boolean; cdg: boolean; styling: boolean;
     theme: 'day' | 'night'; accent: 'blue' | 'pink' | 'purple';
   };
   type StudioUpdateStatus = {
