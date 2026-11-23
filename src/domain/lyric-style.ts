@@ -27,8 +27,10 @@ export type LyricStyle = {
   countdownBar: LyricBarStyle & { minimumBreak: number };
 };
 
+export const lyricLineCounts: readonly number[] = [2, 3, 4, 5, 6];
+
 export const defaultLyricStyle: LyricStyle = {
-  font: 'sans', allCaps: false, linesPerScreen: 1,
+  font: 'sans', allCaps: false, linesPerScreen: 4,
   fontSize: 87, leading: 160,
   textColor: '#ffffff', highlightColor: '#d5167a', outlineColor: '#101020', backgroundColor: '#171226',
   progressBar: { enabled: false, x: 50, y: 1, width: 100, height: .6, fillColor: '#601ce9', trackColor: '#2b2b2b', borderColor: '#000000' },
@@ -55,7 +57,7 @@ export function safeFontFamily(value: unknown): string {
 
 export function normalizeLyricStyle(value?: Partial<LyricStyle> | null): LyricStyle {
   const color = (key: 'textColor' | 'highlightColor' | 'outlineColor' | 'backgroundColor') => hexColor(value?.[key], defaultLyricStyle[key]);
-  const rows = value?.linesPerScreen ?? defaultLyricStyle.linesPerScreen;
+  const rows = value?.linesPerScreen === 1 ? lyricLineCounts[0] : value?.linesPerScreen ?? defaultLyricStyle.linesPerScreen;
   const family = safeFontFamily(value?.customFont?.family);
   const face = safeFontFamily(value?.customFont?.exportName);
   const file = value?.customFont?.path;
@@ -68,7 +70,7 @@ export function normalizeLyricStyle(value?: Partial<LyricStyle> | null): LyricSt
     fontSize: numeric(value?.fontSize, defaultLyricStyle.fontSize, 24, 220),
     leading: numeric(value?.leading, defaultLyricStyle.leading, 105, 260),
     allCaps: value?.allCaps === true,
-    linesPerScreen: [1, 2, 3, 4].includes(rows) ? rows : defaultLyricStyle.linesPerScreen,
+    linesPerScreen: lyricLineCounts.includes(rows) ? rows : defaultLyricStyle.linesPerScreen,
     textColor: color('textColor'), highlightColor: color('highlightColor'), outlineColor: color('outlineColor'), backgroundColor: color('backgroundColor'),
     progressBar: barStyle(value?.progressBar, defaultLyricStyle.progressBar),
     countdownBar: { ...barStyle(value?.countdownBar, defaultLyricStyle.countdownBar),
@@ -125,38 +127,48 @@ export function layoutLyrics(lines: readonly LyricLine[], duration: number, inpu
   const bars: LyricBar[] = [];
   if (style.progressBar.enabled) bars.push(timedBar(style.progressBar, width, height, 0, endOfVideo));
   let lastPhraseEnd = 0;
+  let lastVisibleEnd = 0;
+  const transition = .18;
   const fontHeight = style.fontSize * height / 1080;
   for (const group of phrases) {
-    const phraseStart = Math.max(lastPhraseEnd, group[0].start - (rows > 1 ? 1.25 : 0));
+    const phraseStart = Math.max(lastPhraseEnd, group[0].start - 1.25);
     const slotCount = Math.min(rows, group.length);
     const rowHeight = Math.min(Math.round(fontHeight * style.leading / 100), Math.floor(height * .90 / slotCount));
     const slotEnds: number[] = [];
-    if (style.countdownBar.enabled && group[0].start - lastPhraseEnd >= style.countdownBar.minimumBreak && phraseStart > lastPhraseEnd) {
-      bars.push(timedBar(style.countdownBar, width, height, lastPhraseEnd, phraseStart));
+    const countdownStart = Math.max(lastPhraseEnd, lastVisibleEnd);
+    if (style.countdownBar.enabled && group[0].start - lastPhraseEnd >= style.countdownBar.minimumBreak && phraseStart > countdownStart) {
+      bars.push(timedBar(style.countdownBar, width, height, countdownStart, phraseStart));
     }
     // Keep each on-screen line in its row. A completed row is reused for the
     // next unsung cue, including when the current lyric wraps to the top.
     for (const [index, { line, start, end }] of group.entries()) {
       const row = index % slotCount;
-      const showAt = rows === 1 ? Math.max(start, slotEnds[row] ?? 0) : slotEnds[row] ?? phraseStart;
-      const hideAt = Math.min(end, group[index + slotCount]?.start ?? endOfVideo);
+      const showAt = slotEnds[row] ?? phraseStart;
+      const next = group[index + 1];
+      const fadeAt = next ? Math.max(end, next.start + (next.end - next.start) / 2) : end;
+      // During closely spaced cues, free the row in time for its next sung lyric.
+      const hideAt = Math.min(fadeAt + transition, group[index + slotCount]?.start ?? endOfVideo);
       if (hideAt <= showAt) continue;
       slotEnds[row] = hideAt;
+      lastVisibleEnd = Math.max(lastVisibleEnd, hideAt);
+      const shortFade = Math.min(transition, (hideAt - showAt) / 3);
+      const fadeOut = hideAt > fadeAt ? Math.min(transition, hideAt - fadeAt) : shortFade;
+      const fadeIn = Math.min(shortFade, hideAt - showAt - fadeOut);
       const rawWords = line.words.length && line.words.every(word => Number.isFinite(word.startSeconds) && Number.isFinite(word.endSeconds))
         && line.words.map(word => word.text).join('') === line.text
         ? line.words : [{ text: line.text, startSeconds: start, endSeconds: end }];
       let wordCursor = start;
+      const highlightEnd = Math.min(end, hideAt);
       const words: TimedWord[] = rawWords.map(word => {
-        const startSeconds = Math.min(hideAt, Math.max(wordCursor, word.startSeconds));
-        wordCursor = Math.min(hideAt, Math.max(startSeconds, word.endSeconds));
+        const startSeconds = Math.min(highlightEnd, Math.max(wordCursor, word.startSeconds));
+        wordCursor = Math.min(highlightEnd, Math.max(startSeconds, word.endSeconds));
         return { text: style.allCaps ? word.text.toUpperCase() : word.text, startSeconds, endSeconds: wordCursor };
       });
       // Leave the same room for wide glyphs in both renderers.
       const ems = [...words.map(word => word.text).join('')].reduce((total, char) =>
         total + (/\p{Mark}/u.test(char) ? 0 : /[^\u0000-\u024f]/u.test(char) ? 1.08 : /[MW@%]/.test(char) ? .95 : .68), 0);
       const fontSize = Math.max(1, Math.round(Math.min(fontHeight, rowHeight * .94, (width - side * 2) / Math.max(1, ems))));
-      const fade = Math.min(.18, (hideAt - showAt) / 3);
-      entries.push({ showAt, hideAt, fade, words, centerY: height / 2 + (row - (slotCount - 1) / 2) * rowHeight, fontSize });
+      entries.push({ showAt, hideAt, fadeIn, fadeOut, words, centerY: height / 2 + (row - (slotCount - 1) / 2) * rowHeight, fontSize });
     }
     lastPhraseEnd = group.reduce((latest, cue) => Math.max(latest, cue.end), lastPhraseEnd);
   }

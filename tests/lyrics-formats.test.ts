@@ -61,8 +61,8 @@ test('writes portable kit paths without host-local folders', () => {
 test('creates karaoke-tagged subtitle cues for MP4 export', () => {
   const parsed = parseLrc('[00:01.00]<00:01.00>Hello <00:01.60>there');
   const ass = toAss('Song', 'Artist', 5, parsed.lines);
-  assert.match(ass, /Dialogue: 0,0:00:01\.00/);
-  assert.match(ass, /\\kf/);
+  assert.match(ass, /Dialogue: 0,0:00:00\.00,0:00:03\.18/);
+  assert.match(ass, /\\kt100\\kf60\}Hello/);
 });
 
 test('seeds words while preserving whitespace and records precise manual starts', () => {

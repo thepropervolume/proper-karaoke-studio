@@ -13,7 +13,7 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 - Capture line or word starts at the playhead, with undo, redo, and session cancellation. Set individual timing fields from the context menu or split a line into an editable word draft.
 - Scrub, pan, and zoom at the pointer in a resizable waveform. Move a cue to the playhead while retaining word offsets. Transport can skip back 5 seconds or ahead 10 seconds.
 - Work in a Booth-style workspace with Studio's Bouncing Ball icon, Day and Night appearance, selectable accents, a large singer preview, a resizable editor, and fixed playback controls. [Workspace guide](workspace.md)
-- Save a bundled or custom lyric font, font size, leading, casing, colors, and one to four rows. Rows fade out and refill in place. The preview and authored MP4 and CD+G exports share timing for the optional song-progress and countdown bars.
+- Save a bundled or custom lyric font, font size, leading, casing, colors, and two to six rows. Four rows are the default. Finished lines hold until halfway through the next sung line when the row is available. The preview and authored MP4 and CD+G exports share lyric and bar timing.
 - Format imported or pasted lyrics with adjustable minimum, target, and maximum line lengths. The formatter leaves timed cues available until the user rebuilds them. [Formatting guide](workspace.md)
 - Force-align supplied lyrics to a selected audio track with WhisperX or Qwen locally, or with Vultr or AudioShake after upload approval. Studio retains the supplied words and line breaks while adding timestamps.
 - Import and export the Studio lyrics JSON schema, Enhanced LRC word timestamps, and SRT line cues. Studio uses Karaoke Core for LRC, SRT, and the common timing types.

@@ -144,11 +144,11 @@ export function toRenderTiming(lines: readonly LyricLine[], duration: number, st
   return {
     durationSeconds: Math.max(1, duration), bounds: { x: 0, y: 0, width, height },
     rightToLeft: false, tracks: [], files: [], countIns: [], bars,
-    pages: entries.map(({ showAt: startSeconds, hideAt: endSeconds, fade, words: syllables, centerY, fontSize }, index) => {
+    pages: entries.map(({ showAt: startSeconds, hideAt: endSeconds, fadeIn, fadeOut, words: syllables, centerY, fontSize }, index) => {
       const lineHeight = fontSize / .8;
       return {
-        id: index, startSeconds, endSeconds, fadeIn: { startSeconds, durationSeconds: fade },
-        fadeOut: { startSeconds: endSeconds - fade, durationSeconds: fade }, activeColor: palette.highlightColor, inactiveColor: palette.textColor,
+        id: index, startSeconds, endSeconds, fadeIn: { startSeconds, durationSeconds: fadeIn },
+        fadeOut: { startSeconds: endSeconds - fadeOut, durationSeconds: fadeOut }, activeColor: palette.highlightColor, inactiveColor: palette.textColor,
         rightToLeft: false, trackId: null, voice: 'Lead',
         lines: [{
           id: index, box: { x: side, y: centerY - lineHeight / 2, width: width - side * 2, height: lineHeight }, leadIn: null,

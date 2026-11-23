@@ -72,15 +72,14 @@ export function toAss(title: string, artist: string, duration: number, lines: re
   };
   const line = (layer: number, start: number, end: number, text: string) =>
     'Dialogue: ' + layer + ',' + stamp(start) + ',' + stamp(end) + ',Default,,0,0,0,,' + text;
-  const events = entries.map(({ showAt, hideAt, fade, words, centerY, fontSize }) => {
+  const events = entries.map(({ showAt, hideAt, fadeIn, fadeOut, words, centerY, fontSize }) => {
     const position = '{\\an5\\pos(' + width / 2 + ',' + centerY + ')\\fs' + fontSize + '\\bord' + Math.max(.5, fontSize * .0425).toFixed(2) + '}';
     const lyrics = words.map(word => {
       const delay = Math.max(0, Math.round((word.startSeconds - showAt) * 100));
       const span = Math.max(1, Math.round((word.endSeconds - word.startSeconds) * 100));
       return '{\\kt' + delay + '\\kf' + span + '}' + esc(word.text);
     }).join('');
-    const fadeMs = Math.round(fade * 1000);
-    return line(0, showAt, hideAt, position + '{\\fad(' + fadeMs + ',' + fadeMs + ')}' + lyrics);
+    return line(0, showAt, hideAt, position + '{\\fad(' + Math.round(fadeIn * 1000) + ',' + Math.round(fadeOut * 1000) + ')}' + lyrics);
   });
   const rectangle = (left: number, top: number, right: number, bottom: number, color: string, motion = '') =>
     '{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H' + bgr(color) + '&' + motion + '\\p1}m '

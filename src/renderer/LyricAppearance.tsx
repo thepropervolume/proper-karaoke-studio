@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { defaultLyricStyle, lyricFonts, type CustomLyricFont, type LyricBarStyle, type LyricStyle } from '../domain/lyric-style';
+import { defaultLyricStyle, lyricFonts, lyricLineCounts, type CustomLyricFont, type LyricBarStyle, type LyricStyle } from '../domain/lyric-style';
 import { HelpTip } from './HelpTip';
 import { PreferenceField, preferenceError } from './PreferencesDialog';
 
@@ -119,7 +119,7 @@ export function LyricAppearance({ value, change, close, backdrop, chooseBackdrop
         </PreferenceField>
         <PreferenceField label="Lines on Screen" hint="Reserve this many centered lyric rows and show nearby upcoming lines." reset={() => change({ ...value, linesPerScreen: defaultLyricStyle.linesPerScreen })}>
           {id => <select id={id} value={value.linesPerScreen} onChange={event => change({ ...value, linesPerScreen: Number(event.target.value) })}>
-            {[1, 2, 3, 4].map(count => <option key={count} value={count}>{count}</option>)}
+            {lyricLineCounts.map(count => <option key={count} value={count}>{count}</option>)}
           </select>}
         </PreferenceField>
       </div>
