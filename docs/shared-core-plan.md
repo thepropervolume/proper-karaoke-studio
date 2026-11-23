@@ -2,7 +2,7 @@
 
 ## Current integration
 
-Studio uses the lyric cue and word timing types plus LRC and SRT format adapters from [Proper Karaoke Core 0.1.1](https://github.com/thepropervolume/proper-karaoke-core). The versioned npm tarball and its SHA-256 checksum are pinned in the Studio vendor directory. The archive includes its MPL 2.0 notice and corresponding TypeScript source. A clean npm install uses the package from this checkout without registry credentials.
+Studio uses lyric timing types, LRC and SRT format adapters, and the desktop updater from Proper Karaoke Core 0.1.2. The versioned npm tarball and its SHA-256 checksum are pinned in the Studio vendor directory. The archive includes its MPL 2.0 notice and corresponding source. A clean npm install uses the package from this checkout without registry credentials. [Proper Karaoke Core](https://github.com/thepropervolume/proper-karaoke-core)
 
 Enhanced LRC imports preserve closing timestamps, and outputs include the closing marker for the last word. Studio still owns its project JSON, ASS formatting for MP4 and CD+G, waveform edits, and TPV kits.
 
@@ -19,6 +19,7 @@ To update Core, download the tarball and SHA256SUMS.txt from its release or buil
 
 - KaraFun, Karaoke Nerds, YouTube, and other provider/session code.
 - Electron main/preload bridges, local file pickers, local database, and settings UI.
+- Studio's update choice and how the editor hands off a verified update after project recovery.
 - Studio authoring/editing, model selection, FFmpeg export, TPV kit workflow.
 - Booth singer rotation, show management, remote queue, and display-window lifecycle.
 
