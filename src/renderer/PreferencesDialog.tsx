@@ -1,5 +1,6 @@
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
-import { alignmentLanguages, separatorModels } from '../domain/studio-options.json';
+import { separatorModels } from '../domain/studio-options.json';
+import { alignmentEngines, alignmentLanguageFor, isAlignmentEngine, type AlignmentEngine } from '../domain/alignment-engines';
 import type { StudioModelLibrary } from '../domain/model-library';
 import type { StudioShortcuts } from '../domain/studio-shortcuts';
 import { HelpTip } from './HelpTip';
@@ -9,8 +10,6 @@ import { StudioShortcutPreferences } from './StudioShortcutPreferences';
 import { StudioUpdates } from './StudioUpdates';
 
 const languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
-const languages = alignmentLanguages.map(code => ({ code, name: languageNames.of(code) ?? code }))
-  .sort((a, b) => a.name.localeCompare(b.name));
 
 export function preferenceError(cause: unknown) {
   return (cause instanceof Error ? cause.message : String(cause))
@@ -63,6 +62,11 @@ export function PreferencesDialog({ settings, initialSection, updates, shortcuts
   const { separatorAdapter: adapter, separatorExecutable: executable } = draft;
   const local = adapter === 'audio-separator' || adapter === 'demucs';
   const saved = defaults?.saved ?? settings;
+  const engine = draft.alignmentEngine;
+  const selectedAligner = alignmentEngines[engine];
+  const localAligner = engine === 'whisperx' || engine === 'qwen' ? engine : null;
+  const languages = selectedAligner.languages.map(code => ({ code, name: languageNames.of(code) ?? code }))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const standard = catalog?.models ?? separatorModels[adapter];
   const models = [...new Map([
     ...(library?.models.filter(model => model.adapter === adapter && model.purpose === 'separation') ?? []),
@@ -91,22 +95,25 @@ export function PreferencesDialog({ settings, initialSection, updates, shortcuts
   }, [adapter, discovery]);
 
   useEffect(() => {
+    setRuntime(undefined);
+    if (!localAligner) return;
     let active = true;
     const unsubscribe = window.studio.onAlignmentProgress(progress => {
       if (progress.phase !== 'aligning') setRuntime({ state: 'installing', message: progress.message });
     });
-    const update = () => void window.studio.getAlignmentStatus()
+    const update = () => void window.studio.getAlignmentStatus(localAligner)
       .then(value => { if (active) setRuntime(value); })
       .catch(cause => { if (active) setError(preferenceError(cause)); });
     update();
     const timer = window.setInterval(update, 5000);
     return () => { active = false; unsubscribe(); window.clearInterval(timer); };
-  }, []);
+  }, [localAligner]);
 
   async function install() {
+    if (!localAligner) return;
     setError('');
     setInstalling(true);
-    try { setRuntime(await window.studio.installAlignment()); }
+    try { setRuntime(await window.studio.installAlignment(localAligner)); }
     catch (cause) {
       setError(preferenceError(cause));
       setRuntime({ state: 'missing', message: 'AI Sync setup stopped.' });
@@ -134,6 +141,13 @@ export function PreferencesDialog({ settings, initialSection, updates, shortcuts
 
   function edit<Key extends keyof StudioSettings>(key: Key, value: StudioSettings[Key]) {
     setDraft(current => ({ ...current, [key]: value }));
+  }
+
+  function changeAlignmentEngine(value: AlignmentEngine) {
+    if (installing) return;
+    setDraft(current => ({ ...current, alignmentEngine: value,
+      alignmentLanguage: alignmentLanguageFor(value, current.alignmentLanguage) || 'en',
+    }));
   }
 
   const refreshModels = () => setDiscovery({ executable, refresh: true });
@@ -222,14 +236,26 @@ export function PreferencesDialog({ settings, initialSection, updates, shortcuts
         </div>
         <div className="settings-group">
           <h3>Lyric Synchronization</h3>
-          <PreferenceField label="Lyric Language" hint="Choose the language sung in the recording so AI Sync loads the matching alignment model." reset={() => edit('alignmentLanguage', saved.alignmentLanguage)}>
+          <PreferenceField label="AI Sync Engine" hint="Local engines run on this computer. Cloud engines require an API key and your approval to send the selected audio and lyrics." reset={() => changeAlignmentEngine(saved.alignmentEngine)}>
+            {id => <select id={id} value={engine} disabled={installing} onChange={event => {
+              if (isAlignmentEngine(event.target.value)) changeAlignmentEngine(event.target.value);
+            }}>
+              {Object.entries(alignmentEngines).map(([key, aligner]) => <option key={key} value={key}>{aligner.label}</option>)}
+            </select>}
+          </PreferenceField>
+          {engine !== 'audioshake' && <PreferenceField label="Lyric Language" hint="Choose the language sung in the recording." reset={() => edit('alignmentLanguage', selectedAligner.languages.includes(saved.alignmentLanguage) ? saved.alignmentLanguage : 'en')}>
             {id => <select id={id} value={draft.alignmentLanguage} onChange={event => edit('alignmentLanguage', event.target.value)}>
               {languages.map(language => <option key={language.code} value={language.code}>{language.name}</option>)}
             </select>}
-          </PreferenceField>
+          </PreferenceField>}
           <div className="row spaced">
-            <span className="muted" role="status">{runtime?.message ?? 'Checking AI Sync setup…'}</span>
-            {runtime?.state === 'missing' && <button type="button" disabled={installing} onClick={() => void install()}>Install AI Sync</button>}
+            {selectedAligner.cloud ? <>
+              <span className="muted">{engine === 'audioshake' ? 'AudioShake detects the language automatically.' : 'Set up the API key to use Vultr.'}</span>
+              <button type="button" onClick={() => setSection('integrations')}>Manage API Keys</button>
+            </> : <>
+              <span className="muted" role="status">{runtime?.message ?? 'Checking AI Sync setup…'}</span>
+              {runtime?.state === 'missing' && <button type="button" disabled={installing} onClick={() => void install()}>{engine === 'qwen' ? 'Install Qwen' : 'Install AI Sync'}</button>}
+            </>}
           </div>
         </div>
         <div className="settings-group">
@@ -254,7 +280,7 @@ export function PreferencesDialog({ settings, initialSection, updates, shortcuts
         </details>
         {error && <p className="error" role="alert">{error}</p>}
         <div className="row spaced preference-footer">
-          <button type="button" disabled={saving || !defaults} data-tip="Load Studio’s factory values into this form. Save to apply them." onClick={() => {
+          <button type="button" disabled={saving || installing || !defaults} data-tip="Load Studio’s factory values into this form. Save to apply them." onClick={() => {
             if (!defaults) return;
             setDraft(defaults.factory); setDiscovery({ executable: defaults.factory.separatorExecutable, refresh: false });
           }}>Restore Factory Settings</button>
@@ -337,13 +363,15 @@ function IntegrationRow({ integration, busy, onUpdate, onNotice, perform }: Inte
   const { id, kind, configured, storageAvailable } = integration;
   const dango = kind === 'dango';
   const provider = kind !== 'custom';
+  const alignment = kind === 'vultr' || kind === 'audioshake';
   const keyLabel = dango ? 'App Secret' : 'API Key';
   const closeEditor = () => { setAppKey(''); setSecret(''); setEditing(false); };
 
   return <article className="preferences-integration">
     <div className="row spaced"><h3>{integration.name}</h3>
       <span className="muted">{configured ? 'Credentials saved' : 'No credentials saved'}</span></div>
-    <p className="muted">{provider ? 'Cloud stem separation. Uploads require your approval and may incur a charge.'
+    <p className="muted">{alignment ? 'Cloud lyric synchronization. Studio uploads the selected audio and supplied lyrics with your approval. Charges may apply.'
+      : provider ? 'Cloud stem separation. Uploads require your approval and may incur a charge.'
       : 'Custom entry for storing credentials securely.'}</p>
     {!storageAvailable && <p className="muted">Unlock your system keyring to save or verify credentials.</p>}
     {editing ? <form className="stack" onSubmit={event => {
@@ -364,11 +392,11 @@ function IntegrationRow({ integration, busy, onUpdate, onNotice, perform }: Inte
     </form> : <div className="toolbar">
       <button type="button" disabled={busy || !storageAvailable} onClick={() => setEditing(true)}>{configured ? 'Replace Credentials' : 'Add Credentials'}</button>
       {kind !== 'custom' && configured && <button type="button" disabled={busy || !storageAvailable} onClick={() => void perform(async () => {
-        await window.studio.verifyIntegration(kind);
-        onNotice(integration.name + ' accepted the saved credentials.');
+        const result = await window.studio.verifyIntegration(kind);
+        onNotice(result.message ?? integration.name + ' accepted the saved credentials.');
       })}>Verify Credentials</button>}
       {configured && <button type="button" disabled={busy} onClick={() => void perform(async () => onUpdate(await window.studio.removeIntegrationKey(id)))}>Remove Credentials</button>}
-      {integration.website && <button type="button" disabled={busy} onClick={() => void perform(() => window.studio.openIntegrationWebsite(id))}>Open Website</button>}
+      {integration.website && <button type="button" disabled={busy} onClick={() => void perform(() => window.studio.openIntegrationWebsite(id))}>{alignment ? 'Get an API Key' : 'Open Website'}</button>}
       {!provider && <button type="button" disabled={busy} onClick={() => void perform(async () => onUpdate(await window.studio.removeIntegration(id)))}>Remove Integration</button>}
     </div>}
   </article>;

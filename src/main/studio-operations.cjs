@@ -11,7 +11,10 @@ const { CdgEncoder, cdgExportFrameRate, cdgRgbFrameBytes } = require('../domain/
 const { portableBackgroundPath } = require('../domain/project.ts');
 const { portableLyricFontPath } = require('../domain/lyric-style.ts');
 const { describeLyricFont } = require('./lyric-fonts.cjs');
-const { alignmentLanguages, separatorModels } = require('../domain/studio-options.json');
+const { separatorModels } = require('../domain/studio-options.json');
+const { alignmentEngines, alignmentLanguageFor, isAlignmentEngine, isCloudAlignmentEngine } = require('../domain/alignment-engines.ts');
+const { alignCloudLyrics, vultrMaximumBytes } = require('./cloud-alignment.cjs');
+const { matchProviderWords } = require('../domain/forced-alignment.ts');
 const { localSeparatorArgs } = require('./separation-options.cjs');
 const { resolveSeparatorExecutable, normalizeEnsemble, runAudioSeparator } = require('./local-separator.cjs');
 const { DEFAULT_LYRIC_FORMAT_OPTIONS, normalizeLyricFormatOptions, validateLyricFormatOptions } = require('../domain/lyric-format.ts');
@@ -31,16 +34,11 @@ const { isStudioUpdateMode } = require('../domain/desktop-update-preference.ts')
 
 const defaultSettings = {
   ffmpegPath: 'ffmpeg', separatorAdapter: 'audio-separator', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx',
-  lyricAlignerExecutable: '', alignmentLanguage: 'en', lyricFormat: DEFAULT_LYRIC_FORMAT_OPTIONS,
+  lyricAlignerExecutable: '', alignmentEngine: 'whisperx', alignmentLanguage: 'en', lyricFormat: DEFAULT_LYRIC_FORMAT_OPTIONS,
   uvrModelsPath: '', ensembleModels: [], backingModel: '', updateMode: 'notify',
 };
 const modelId = /^(?!\.{1,2}$)[\w.-]{1,160}$/;
 const isModelId = value => typeof value === 'string' && modelId.test(value);
-
-function supportedAlignmentLanguage(value) {
-  const base = typeof value === 'string' ? value.trim().toLowerCase().split('-')[0] : '';
-  return alignmentLanguages.includes(base) ? base : '';
-}
 
 function text(input, field, max = 500) {
   if (typeof input !== 'string' || input.length > max) throw new Error('Invalid ' + field + '.');
@@ -81,6 +79,7 @@ function loadSettings(file) {
   try {
     const value = JSON.parse(readFileSync(file, 'utf8'));
     const separatorAdapter = Object.hasOwn(separationDefaults, value.separatorAdapter) ? value.separatorAdapter : defaultSettings.separatorAdapter;
+    const alignmentEngine = isAlignmentEngine(value.alignmentEngine) ? value.alignmentEngine : defaultSettings.alignmentEngine;
     return {
       ffmpegPath: typeof value.ffmpegPath === 'string' ? value.ffmpegPath : defaultSettings.ffmpegPath,
       separatorAdapter,
@@ -88,7 +87,7 @@ function loadSettings(file) {
       separatorModel: isModelId(value.separatorModel) && (!cloudAdapter(separatorAdapter) || separatorModels[separatorAdapter].some(model => model.id === value.separatorModel))
         ? value.separatorModel : separationDefaults[separatorAdapter].model,
       lyricAlignerExecutable: typeof value.lyricAlignerExecutable === 'string' ? value.lyricAlignerExecutable : defaultSettings.lyricAlignerExecutable,
-      alignmentLanguage: supportedAlignmentLanguage(value.alignmentLanguage) || defaultSettings.alignmentLanguage,
+      alignmentEngine, alignmentLanguage: alignmentLanguageFor(alignmentEngine, value.alignmentLanguage) || defaultSettings.alignmentLanguage,
       lyricFormat: normalizeLyricFormatOptions(value.lyricFormat),
       uvrModelsPath: typeof value.uvrModelsPath === 'string' && path.isAbsolute(value.uvrModelsPath) ? value.uvrModelsPath : '',
       ensembleModels: Array.isArray(value.ensembleModels) ? [...new Set(value.ensembleModels.filter(isModelId))].slice(0, 3) : [],
@@ -100,13 +99,15 @@ function loadSettings(file) {
 function validateSettings(value) {
   const separatorAdapter = value?.separatorAdapter ?? defaultSettings.separatorAdapter;
   if (!Object.hasOwn(separationDefaults, separatorAdapter)) throw new Error('Choose a supported stem separator.');
+  const alignmentEngine = value?.alignmentEngine ?? defaultSettings.alignmentEngine;
+  if (!isAlignmentEngine(alignmentEngine)) throw new Error('Choose a supported AI Sync engine.');
   const result = {
     ffmpegPath: text(value?.ffmpegPath, 'FFmpeg executable', 4096).trim() || 'ffmpeg',
     separatorAdapter,
     separatorExecutable: text(value?.separatorExecutable, 'separator executable', 4096).trim() || separationDefaults[separatorAdapter].executable,
     separatorModel: text(value?.separatorModel, 'model name', 160).trim() || separationDefaults[separatorAdapter].model,
     lyricAlignerExecutable: text(value?.lyricAlignerExecutable, 'Python executable', 4096).trim() || defaultSettings.lyricAlignerExecutable,
-    alignmentLanguage: text(value?.alignmentLanguage, 'alignment language', 16).trim() || 'en',
+    alignmentEngine, alignmentLanguage: text(value?.alignmentLanguage, 'alignment language', 16).trim() || 'en',
     lyricFormat: validateLyricFormatOptions(value?.lyricFormat),
     uvrModelsPath: text(value?.uvrModelsPath ?? '', 'UVR models folder', 4096).trim(),
     ensembleModels: value?.ensembleModels ?? [],
@@ -120,8 +121,8 @@ function validateSettings(value) {
   if (!Array.isArray(result.ensembleModels) || result.ensembleModels.length > 3 || !result.ensembleModels.every(isModelId)
     || (result.backingModel && !isModelId(result.backingModel))) throw new Error('Choose valid models for the ensemble and backing-vocal pass.');
   result.ensembleModels = [...new Set(result.ensembleModels)];
-  result.alignmentLanguage = supportedAlignmentLanguage(result.alignmentLanguage);
-  if (!result.alignmentLanguage) throw new Error('Choose a language supported by AI Sync.');
+  result.alignmentLanguage = alignmentLanguageFor(alignmentEngine, result.alignmentLanguage);
+  if (!result.alignmentLanguage) throw new Error('Choose a language supported by ' + alignmentEngines[alignmentEngine].label + '.');
   return result;
 }
 
@@ -392,23 +393,50 @@ async function separate(input, directory) {
   return { files, outputDirectory };
 }
 
-async function alignLyrics(input, scriptPath, prepareExecutable) {
-  const language = supportedAlignmentLanguage(text(input?.language, 'alignment language', 16));
+async function prepareAlignmentInput(input, engine) {
+  if (!isAlignmentEngine(engine)) throw new Error('Choose a supported AI Sync engine.');
+  const language = alignmentLanguageFor(engine, text(input?.language, 'alignment language', 16));
   const lyrics = input?.lyrics;
-  if (!language) throw new Error('Choose a language supported by AI Sync.');
-  if (!Array.isArray(lyrics) || !lyrics.length || lyrics.length > 500 || lyrics.some(line => typeof line !== 'string' || line.length > 2000) || Buffer.byteLength(JSON.stringify(lyrics)) > 256 * 1024) throw new Error('Provide up to 500 lyric lines (maximum 256 KB total).');
-  const source = await localFile(input?.audioPath, AUDIO_EXTENSIONS);
+  if (!language) throw new Error('Choose a language supported by ' + alignmentEngines[engine].label + '.');
+  if (!Array.isArray(lyrics) || !lyrics.length || lyrics.length > 500 || lyrics.some(line => typeof line !== 'string' || !line.trim() || line.length > 2000) || Buffer.byteLength(JSON.stringify(lyrics)) > 256 * 1024) throw new Error('Provide up to 500 nonempty lyric lines (maximum 256 KB total).');
+  return { engine, language, lyrics, audioPath: await localFile(input?.audioPath, AUDIO_EXTENSIONS) };
+}
+
+async function runCloudAlignment(request, key, ffmpegPath = defaultSettings.ffmpegPath, options) {
+  const align = async audioPath => {
+    const result = await alignCloudLyrics({ ...request, audioPath }, key, options);
+    return { ...result, words: matchProviderWords(request.lyrics, result.words) };
+  };
+  if (request.engine !== 'vultr') return align(request.audioPath);
+  const extension = path.extname(request.audioPath).toLowerCase();
+  const { size } = await fs.stat(request.audioPath);
+  if ((extension === '.mp3' || extension === '.wav') && size <= vultrMaximumBytes) {
+    return align(request.audioPath);
+  }
+  // Compress a private copy for large WAV files and formats that Vultr cannot ingest directly.
+  const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'tpv-vultr-'));
+  try {
+    const audioPath = path.join(folder, 'audio.mp3');
+    await spawnTool(ffmpegPath, ['-v', 'error', '-nostdin', '-i', request.audioPath,
+      '-map', '0:a:0', '-ac', '1', '-ar', '24000', '-c:a', 'libmp3lame', '-b:a', '96k', audioPath], 'FFmpeg audio preparation for Vultr');
+    return await align(audioPath);
+  } finally { await removeExportScratch(folder); }
+}
+
+async function alignLyrics(input, scriptPath, prepareExecutable, engine = 'whisperx') {
+  if (isCloudAlignmentEngine(engine)) throw new Error('Choose a local AI Sync engine.');
+  const { audioPath, language, lyrics } = await prepareAlignmentInput(input, engine);
   const executable = text(prepareExecutable ? await prepareExecutable() : input?.executable, 'AI Sync runtime', 4096).trim();
   if (!executable) throw new Error('The AI Sync runtime is unavailable.');
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tpv-align-'));
   const inputPath = path.join(tempDir, 'lyrics.json'), outputPath = path.join(tempDir, 'aligned.json');
   try {
     await fs.writeFile(inputPath, JSON.stringify({ lyrics }), 'utf8');
-    await spawnTool(executable, [scriptPath, '--audio', source, '--input', inputPath, '--output', outputPath, '--language', language], 'WhisperX lyric alignment');
+    await spawnTool(executable, [scriptPath, '--engine', engine, '--audio', audioPath, '--input', inputPath, '--output', outputPath, '--language', language], alignmentEngines[engine].label + ' lyric alignment');
     const result = JSON.parse(await fs.readFile(outputPath, 'utf8'));
     if (!Number.isFinite(result.duration) || !Array.isArray(result.words) || result.words.length > 10000) throw new Error('The alignment tool returned an invalid result.');
     return result;
   } finally { await fs.rm(tempDir, { recursive: true, force: true }); }
 }
 
-module.exports = { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, BACKGROUND_EXTENSIONS, cloudAdapter, defaultSettings, separationDefaults, text, localFile, readCdg, loadSettings, validateSettings, saveSettings, exportKit, exportVideo, exportCdg, createGifPreview, separate, alignLyrics, probeAudio, writeOutput };
+module.exports = { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, BACKGROUND_EXTENSIONS, cloudAdapter, defaultSettings, separationDefaults, text, localFile, readCdg, loadSettings, validateSettings, saveSettings, exportKit, exportVideo, exportCdg, createGifPreview, separate, alignLyrics, prepareAlignmentInput, runCloudAlignment, probeAudio, writeOutput };

@@ -52,15 +52,22 @@ Import a CD+G source with `lyrics import <file.cdg>`. Add its matching audio wit
 
 To import a timed lyric JSON file from another application, supply a [field mapping](json-lyric-import.md) with `lyrics import <file.json> --mapping <mapping.json>`. Studio lyrics JSON exports can be imported directly.
 
-## Set up local lyric sync
+## Set up lyric sync
 
-The desktop app and CLI share the managed lyric runtime. The first `lyrics align` installs it on supported platforms, or set it up in advance:
+The desktop app and CLI share the managed local runtimes. `lyrics align` uses the saved `alignmentEngine` setting by default. Pass `--engine` to override it for one run. Local setup starts on demand, or set it up in advance:
 
     tpv-karaoke-studio lyrics setup
     tpv-karaoke-studio lyrics setup --status
+    tpv-karaoke-studio lyrics setup --engine qwen
     tpv-karaoke-studio lyrics languages
+    tpv-karaoke-studio lyrics languages --engine qwen
 
-Use `--language en` to select a language for one run. The first alignment in each language downloads its acoustic model. To use a compatible external environment, supply `--python <executable>` or set the CLI's `lyricAlignerExecutable`. The current managed CPU runtime supports Windows x64, Linux x64, and Apple silicon Mac.
+For cloud synchronization, set `VULTR_INFERENCE_API_KEY` or `AUDIOSHAKE_API_KEY` in the environment. `--approve-cloud` authorizes the CLI to upload the selected audio and lyrics and incur processing charges.
+
+    tpv-karaoke-studio lyrics align --engine vultr --approve-cloud --project "Perfect.tpv.json"
+    tpv-karaoke-studio lyrics align --engine audioshake --approve-cloud --audio "Perfect.wav" --lyrics "Perfect.txt" --output "Perfect.enhanced.lrc"
+
+Use `--language en` to select a language for one run. AudioShake detects it automatically. WhisperX downloads its acoustic model the first time you use a language. Qwen downloads one model for its supported languages. Pass `--python <executable>` to use a compatible external environment with either local engine. The `lyricAlignerExecutable` setting selects the external interpreter for WhisperX. Managed CPU runtimes support Windows x64, Linux x64, and Apple silicon Mac.
 
 ## List separation models and use cloud separation
 

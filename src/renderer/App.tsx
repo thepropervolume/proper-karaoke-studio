@@ -8,6 +8,7 @@ import { editLyricTimingText, lyricTimingInput, lyricTimingTokens } from '../dom
 import { parseLyricsFile, toAss, toLrc, toLyricsJson, toSrt } from '../domain/lyrics-formats';
 import { formatLyricText, MAXIMUM_LYRIC_TEXT_BYTES, readLyricVersions, type LyricFormatOptions, type LyricVersion } from '../domain/lyric-format';
 import { applyForcedAlignment } from '../domain/forced-alignment';
+import { alignmentEngines } from '../domain/alignment-engines';
 import { defaultLyricStyle, lyricFonts, normalizeLyricStyle } from '../domain/lyric-style';
 import { DEFAULT_LYRIC_FORMAT_OPTIONS } from '../domain/lyric-format';
 import { studioShortcutForEvent, studioShortcutHint, type StudioShortcutAction } from '../domain/studio-shortcuts';
@@ -144,10 +145,11 @@ export function App() {
   const [error, setError] = useState('');
   const [settings, setSettings] = useState<StudioSettings>({
     ffmpegPath: 'ffmpeg', separatorAdapter: 'audio-separator', separatorExecutable: 'audio-separator', separatorModel: 'UVR-MDX-NET-Inst_HQ_3.onnx',
-    lyricAlignerExecutable: '', alignmentLanguage: 'en', lyricFormat: DEFAULT_LYRIC_FORMAT_OPTIONS,
+    lyricAlignerExecutable: '', alignmentEngine: 'whisperx', alignmentLanguage: 'en', lyricFormat: DEFAULT_LYRIC_FORMAT_OPTIONS,
     uvrModelsPath: '', ensembleModels: [], backingModel: '', updateMode: 'notify',
   });
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const aligner = alignmentEngines[settings.alignmentEngine];
   const [settingsOpen, setSettingsOpen] = useState(false), [busy, setBusy] = useState(false);
   const [settingsSection, setSettingsSection] = useState<'shortcuts' | 'updates'>();
   const updates = useStudioUpdates();
@@ -533,19 +535,26 @@ export function App() {
     if (!source?.path) { setError('Choose an audio file with a local path for lyric synchronization.'); return; }
     if (!lines.length) { setError('Add or import the lyrics before synchronizing.'); return; }
     const lyricsAtStart = JSON.stringify(lines);
-    setBusy(true); setError(''); setStatus('Preparing AI Sync…');
+    setBusy(true); setError(''); setStatus('Preparing ' + aligner.label + '…');
     const stopProgress = window.studio.onAlignmentProgress(progress => setStatus(progress.message));
     try {
       const result = await window.studio.alignLyrics({
         audioPath: source.path,
         language: settings.alignmentLanguage, lyrics: lines.map(line => line.text),
       });
+      if (!result) { setStatus('Lyric synchronization canceled.'); return; }
       if (JSON.stringify(linesRef.current) !== lyricsAtStart) throw new Error('The lyric cues changed while synchronization was running. The new timings were discarded; run synchronization again.');
       const alignedLines = applyForcedAlignment(lines, result.words, Math.max(duration, result.duration));
       setLines(alignedLines);
       setWordTimingDrafts({});
       setDuration(Math.max(duration, result.duration));
-      setStatus(`Synchronized ${result.words.length} supplied lyric words. Review the cues and adjust any mismatches.`);
+      const review = result.reviewLineIndexes ?? [];
+      const summary = `Synchronized ${result.words.length} supplied lyric words.`;
+      if (review.length) {
+        const shown = review.slice(0, 8).map(index => index + 1).join(', ');
+        const more = review.length > 8 ? ` and ${review.length - 8} more` : '';
+        setStatus(`${summary} Check ${review.length === 1 ? 'line' : 'lines'} ${shown}${more}.`);
+      } else setStatus(summary + ' Review the cues and adjust any mismatches.');
     } catch (cause) {
       setError(preferenceError(cause));
       setStatus('Lyric synchronization did not finish. Existing lyric text and timing were kept.');
@@ -1154,11 +1163,14 @@ export function App() {
               </select>
             </label>
             <div className="toolbar">
-              <button type="button" className="primary" aria-label="Sync lyrics with AI" title="Align your supplied lyrics to the selected audio"
-                disabled={!lines.length || !alignmentStemId || busy || timing} data-tip="Align the supplied lyrics to the selected audio on this computer." onClick={() => void alignLyrics()}>AI Sync</button>
+              <button type="button" className="primary" aria-label="Sync lyrics with AI"
+                disabled={!lines.length || !alignmentStemId || !settingsLoaded || busy || timing}
+                data-tip={aligner.cloud ? 'Upload the selected audio and lyrics after approval.' : 'Align the supplied lyrics to the selected audio on this computer.'}
+                onClick={() => void alignLyrics()}>AI Sync</button>
               <button type="button" data-tip={shortcutHint('Play from the current position and tap each line as it begins.', 'time-lines')} disabled={!canStartTiming} onClick={() => void beginTiming('line')}>Time Lines</button>
               <button type="button" data-tip={shortcutHint('Play from the current position and tap each word as it begins.', 'time-words')} disabled={!canStartTiming} onClick={() => void beginTiming('word')}>Time Words</button>
             </div>
+            <small className="muted">AI Sync engine · {aligner.label}</small>
           </div>
           {lines.length > 0 ? <div className="cue-sheet">
             <div className="cue-columns muted" aria-hidden="true"><span>Cue</span><span>Lyrics</span><span>Start / End</span></div>

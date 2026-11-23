@@ -15,7 +15,7 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 - Work in a Booth-style workspace with Studio's Bouncing Ball icon, Day and Night appearance, selectable accents, a large singer preview, a resizable editor, and fixed playback controls. [Workspace guide](workspace.md)
 - Save a bundled or custom lyric font, font size, leading, casing, colors, and one to four rows. Rows fade out and refill in place. The preview and authored MP4 and CD+G exports share timing for the optional song-progress and countdown bars.
 - Format imported or pasted lyrics with adjustable minimum, target, and maximum line lengths. The formatter leaves timed cues available until the user rebuilds them. [Formatting guide](workspace.md)
-- Force-align supplied lyrics to a selected local audio track with WhisperX. The alignment path does not run speech recognition, generate lyrics, or change supplied text; exact lyric words and line breaks are retained while timings are added.
+- Force-align supplied lyrics to a selected audio track with WhisperX or Qwen locally, or with Vultr or AudioShake after upload approval. Studio retains the supplied words and line breaks while adding timestamps.
 - Import and export the Studio lyrics JSON schema, Enhanced LRC word timestamps, and SRT line cues. Studio uses Karaoke Core for LRC, SRT, and the common timing types.
 - Map external timed lyric JSON through explicit JSON Pointer paths and time units in the [CLI](json-lyric-import.md).
 - Render an MP4 with mixed audio, karaoke highlighting, and optional still, GIF, or muted MP4 backgrounds. Animated backgrounds support looping; the preview and rendered action follow the song timeline.
@@ -64,8 +64,8 @@ Studio uses Karaoke Core 0.1.2 for provider-neutral timing, LRC/SRT interchange,
 
 ## AI lyric synchronization
 
-The user supplies and edits lyric text first. Studio sends that text and a chosen local audio file to a small Python adapter, which calls WhisperX's forced-alignment API directly. It does not call WhisperX transcription or use an ASR model to find lyrics. Alignment runs locally; the selected language model is downloaded by WhisperX on first use. The app retains the original lyric strings and line breaks, attaches aligned word timestamps, and leaves the prior timing untouched if alignment fails or the returned words do not match the supplied text.
+The user supplies and edits lyric text first. The selected engine receives the song audio and the supplied lyrics for forced alignment. The app attaches word timestamps and keeps the prior timing whenever alignment fails or the returned words do not match the supplied text.
 
-Choose a supported language in Preferences and review the result in the cue sheet. A clear lead vocal often aligns better than a full mix. Studio and the CLI share a private CPU runtime with a pinned Python and WhisperX. Studio installs it on demand on Windows x64, Linux x64 and Apple silicon Mac. The first sync in each language downloads the corresponding alignment model. [AI Sync guide](lyric-synchronization.md)
+Choose an engine and supported language in Preferences. Studio and the CLI use separate private runtimes for WhisperX and Qwen. Vultr and AudioShake use encrypted credentials in the desktop app or environment variables in the CLI. The desktop app requests approval before uploading the selected audio and supplied lyrics. [AI Sync guide](lyric-synchronization.md)
 
 The Windows smoke test ran the actual CPU model against a generated voice recording with a 1.5-second lead-in and placed all nine supplied words. Full-song timing quality across vocal styles and languages still needs review.

@@ -1,26 +1,28 @@
-# Local AI lyric synchronization
+# AI lyric synchronization
 
-Studio aligns the lyrics you provide to your audio. The displayed words and line breaks come from your project.
+Studio aligns the lyrics you provide to your audio. Choose an **AI Sync Engine** under **Preferences → Audio & Lyrics → Lyric Synchronization** and save it for the session or as the default.
 
-## Setup
+## Local engines
 
-Choose **Install AI Sync** under **Preferences → Audio & Lyrics** or start your first **AI Sync**. Studio downloads a compatible Python 3.13 environment and WhisperX with its audio tools. The installation resides in your Studio app data and leaves the system Python and PATH alone.
+- **WhisperX** is the default. It downloads the acoustic model for the selected language on first use.
+- **Qwen3 ForcedAligner** is an alternative with downloadable weights and support for 11 languages. It accepts recordings up to five minutes. Choose **Install Qwen** or start **AI Sync** to set up its private environment. The first sync downloads the model, which is approximately 1.8 GB. Studio rejects runs where many word durations collapse to near zero. Try an isolated lead vocal or another engine if that happens.
 
-The first setup needs an internet connection and several minutes for the package downloads. Your first sync in a language also downloads its acoustic model. Studio runs alignment on your computer. The managed environment uses CPU inference on Windows x64, Linux x64, and Apple silicon Mac.
+Local engines process your files on your computer. Studio installs managed CPU environments on Windows x64, Linux x64, and Apple silicon. The CLI supports `--python` for a compatible external environment. The local runtimes and model downloads live in app data, separate from your system Python.
 
-Choose an alignment language in Studio Preferences. The CLI also accepts **--python** if you maintain a compatible external environment. The PyTorch versions needed for managed setup have no official Intel Mac wheels.
+## Cloud engines
 
-## Use
+1. **Vultr Aligner 1.** Open **Compute → Serverless Inference** in the [Vultr console](https://console.vultr.com/inference/). Create an inference subscription if you need one. Open the subscription, go to **Overview**, and copy its **API Key**. See [Vultr’s key instructions](https://docs.vultr.com/products/compute/serverless-inference/management/connection).
+2. **AudioShake.** Open **Settings → API Keys** in the [AudioShake dashboard](https://dashboard.audioshake.ai/) and create a key. AudioShake detects the language automatically. See the [AudioShake quickstart](https://developer.audioshake.ai/quickstart).
+3. In Studio, open **Preferences → Integrations**. Use **Add Credentials**, then **Verify Credentials**, on the service’s row. Verification checks the key without uploading a song or submitting an alignment.
 
-1. Import the song audio and add or import its lyrics.
-2. Choose the audio file to align against. A clear lead vocal track generally works best.
-3. Select **AI Sync** and review the resulting word cues.
-4. Correct timings in the cue sheet or with its manual timing tools before exporting.
+Studio asks before sending the selected audio and supplied lyrics. Alignment can incur a charge. If a WAV file exceeds Vultr’s upload limit, or the source is neither WAV nor MP3, Studio uses FFmpeg to prepare a temporary MP3. Your source file stays intact.
 
-If the returned word timings cannot be matched back to your lines, Studio reports the issue and preserves your previous timing. WhisperX models were trained for speech. Review the result against the song, especially for overlapping voices or long sustained notes.
+## Sync a song
 
-## Implementation
+1. Import the song audio and supply the lyric text. For local engines, a clean lead vocal is a good starting point.
+2. Choose the **Audio for Sync** and select **AI Sync**.
+3. Review the resulting cues. Studio reports the line numbers that Vultr marks uncertain.
 
-The adapter decodes audio through PyAV, then loads and calls the WhisperX alignment model. Studio maps the resulting timestamps to the supplied words and punctuation.
+Studio preserves your words, line breaks, and slash-delimited timing cues. When the provider cannot return a complete set of timings that matches your lyrics, Studio keeps the previous timings. See the [CLI guide](cli.md) for scripting.
 
-Studio uses a checksum-verified [uv release](https://github.com/astral-sh/uv/releases/tag/0.13.7) for private Python setup and pins the [WhisperX release](https://github.com/m-bain/whisperX/releases/tag/v3.7.9) used by managed alignment.
+The managed runtime uses a checksum-verified [uv release](https://github.com/astral-sh/uv/releases/tag/0.13.7) and pinned [WhisperX](https://github.com/m-bain/whisperX/releases/tag/v3.7.9) and [Qwen](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B-hf) versions.

@@ -7,6 +7,32 @@ function comparable(value: string): string {
   return value.normalize('NFKD').toLocaleLowerCase().replace(/\p{M}/gu, '').replace(/[^\p{L}\p{N}]/gu, '');
 }
 
+/** Reconcile provider tokenization only when the full lexical sequence still matches. */
+export function matchProviderWords(lyrics: readonly string[], aligned: readonly ForcedAlignedWord[]): readonly ForcedAlignedWord[] {
+  const reference = lyrics.flatMap(lyricWordTokens).map(word => word.trim());
+  const keys = reference.map(comparable);
+  if (aligned.length === keys.length && aligned.every((word, index) => comparable(word.word) === keys[index])) return aligned;
+  if (aligned.some((word, index) => index > 0 && word.start < aligned[index - 1].start)) return aligned;
+  const acoustic = aligned.map(word => ({ text: comparable(word.word), startSeconds: word.start, endSeconds: word.end }))
+    .filter(word => word.text);
+  const matches = remapTimedWords(acoustic, keys.filter(Boolean));
+  // Let the strict mapper report the mismatch without discarding any existing cue timing.
+  if (!matches.length) return aligned;
+  let index = 0;
+  return reference.map((word, position) => {
+    if (keys[position]) {
+      const match = matches[index++];
+      return { word, start: match.startSeconds, end: match.endSeconds };
+    }
+    // A punctuation-only token has no acoustic boundary. Attach it to a nearby word.
+    const previous = matches[index - 1];
+    const next = matches[index];
+    if (!previous) return { word, start: next.startSeconds, end: Math.min(next.endSeconds, next.startSeconds + 0.001) };
+    const end = Math.min(previous.endSeconds, next ? Math.max(previous.startSeconds + 0.001, next.startSeconds) : previous.endSeconds);
+    return { word, start: Math.max(previous.startSeconds, end - 0.001), end };
+  });
+}
+
 /** Apply timestamps from a forced aligner while preserving the user's exact lyric text and line breaks. */
 export function applyForcedAlignment(lines: readonly LyricLine[], aligned: readonly ForcedAlignedWord[], duration: number): LyricLine[] {
   const tokens = lines.flatMap((line, lineIndex) => lyricWordTokens(line.text).map(text => ({ lineIndex, text })));

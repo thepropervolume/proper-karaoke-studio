@@ -3,14 +3,11 @@ const { lstat, mkdir, open, readFile, rename, rm } = require('node:fs/promises')
 const { isAbsolute, join } = require('node:path');
 
 const builtIns = [
-{
-  id: 'dango-ai',
-  name: 'Dango AI',
-  website: 'https://tuanziai.com/en-US/record?type=tool&tool=vocal-remover',
-  kind: 'dango',
-},
+  { id: 'dango-ai', name: 'Dango AI', website: 'https://tuanziai.com/en-US/record?type=tool&tool=vocal-remover', kind: 'dango' },
   { id: 'mvsep', name: 'MVSEP', website: 'https://mvsep.com/user-api', kind: 'mvsep' },
   { id: 'gaudio', name: 'GAUDIO', website: 'https://developers.gaudiolab.io/', kind: 'gaudio' },
+  { id: 'vultr', name: 'Vultr', website: 'https://console.vultr.com/inference/', kind: 'vultr' },
+  { id: 'audioshake', name: 'AudioShake', website: 'https://dashboard.audioshake.ai/', kind: 'audioshake' },
 ];
 const maxCustom = 24;
 const maxRegistryBytes = 64 * 1024;
@@ -154,7 +151,7 @@ function createIntegrationCatalog({ directory, secrets }) {
   function remove(id) {
     return mutate(async entries => {
       const item = known(entries, id);
-      if (item.kind !== 'custom') throw new Error('Use Remove Key to clear the Dango AI credential.');
+      if (item.kind !== 'custom') throw new Error('Use Remove Credentials to clear the saved credentials for this service.');
       // Keep the row available for retry if deleting its credential fails.
       await secrets.removeKey(item.id);
       const updated = entries.filter(entry => entry.id !== item.id);

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyForcedAlignment } from '../src/domain/forced-alignment';
+import { applyForcedAlignment, matchProviderWords } from '../src/domain/forced-alignment';
 import type { LyricLine } from '../src/domain/project';
 
 const lines: LyricLine[] = [
@@ -60,4 +60,18 @@ test('rejects missing and invalid timing results', () => {
     { word: 'stop', start: 1.6, end: 1.8 },
     { word: 'believin', start: 1.9, end: 2.1 },
   ], 10), /invalid or out-of-order/);
+});
+
+test('matches cloud tokenizer boundaries only when the full lexical sequence matches', () => {
+  const aligned = [
+    { word: 'Don', start: .5, end: .8 }, { word: 't', start: .8, end: .9 },
+    { word: '停', start: 1.2, end: 1.4 }, { word: '下', start: 1.4, end: 1.6 },
+  ];
+  assert.deepEqual(matchProviderWords(["Don't / 停下"], aligned), [
+    { word: "Don't", start: .5, end: .9 }, { word: '/', start: .9 - .001, end: .9 },
+    { word: '停下', start: 1.2, end: 1.6 },
+  ]);
+  assert.equal(matchProviderWords(["Don't / 停不下"], aligned), aligned);
+  const reversed = aligned.slice().reverse();
+  assert.equal(matchProviderWords(['下停 Don’t'], reversed), reversed);
 });

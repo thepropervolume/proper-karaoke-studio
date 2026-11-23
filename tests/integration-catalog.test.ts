@@ -27,7 +27,7 @@ test('catalog serializes edits and exposes only names, websites and credential s
   const store = catalog.createIntegrationCatalog({ directory, secrets });
   const builtIns = await store.list();
   const [builtIn] = builtIns;
-  assert.deepEqual(builtIns.map(item => item.id), ['dango-ai', 'mvsep', 'gaudio']);
+  assert.deepEqual(builtIns.map(item => item.id), ['dango-ai', 'mvsep', 'gaudio', 'vultr', 'audioshake']);
   assert.deepEqual(builtIn, {
     id: 'dango-ai',
     name: 'Dango AI',
@@ -61,6 +61,13 @@ test('catalog serializes edits and exposes only names, websites and credential s
   assert.equal(await secrets.readKey(custom.id), null);
   assert.deepEqual(removed.map(item => item.name), [...builtIns.map(item => item.name), 'Karaoke Tools']);
   assert.equal((await reopened.removeKey('dango-ai')).find(item => item.id === 'dango-ai').configured, false);
+  for (const id of ['vultr', 'audioshake']) {
+    const entries = await reopened.setKey(id, privateKey);
+    assert.equal(entries.find(item => item.id === id).configured, true);
+    assert.ok(!JSON.stringify(entries).includes(privateKey));
+    assert.equal(await reopened.readKey(id), privateKey);
+    assert.equal((await reopened.removeKey(id)).find(item => item.id === id).configured, false);
+  }
 });
 
 test('catalog rejects credentials in URLs and leaves pending or invalid data available for recovery', async t => {
@@ -78,8 +85,8 @@ test('catalog rejects credentials in URLs and leaves pending or invalid data ava
   }
   await assert.rejects(() => store.setKey('custom-missing', 'secret'), /Unknown integration/);
   await assert.rejects(() => store.readKey('custom-missing'), /Unknown integration/);
-  for (const id of ['dango-ai', 'mvsep', 'gaudio']) {
-    await assert.rejects(() => store.remove(id), /Remove Key/);
+  for (const id of ['dango-ai', 'mvsep', 'gaudio', 'vultr', 'audioshake']) {
+    await assert.rejects(() => store.remove(id), /Remove Credentials/);
   }
 
   const item = (await store.add({ name: 'Provider', website: 'https://provider.example/' })).find(entry => entry.kind === 'custom');

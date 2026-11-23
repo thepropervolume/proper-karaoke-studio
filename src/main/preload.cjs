@@ -38,8 +38,8 @@ contextBridge.exposeInMainWorld('studio', {
   },
   updateMenu: state => ipcRenderer.invoke('studio:update-menu', state),
   getSeparatorModels: input => ipcRenderer.invoke('studio:separator-models', input),
-  getAlignmentStatus: () => ipcRenderer.invoke('studio:alignment-status'),
-  installAlignment: () => ipcRenderer.invoke('studio:install-alignment'),
+  getAlignmentStatus: engine => ipcRenderer.invoke('studio:alignment-status', engine),
+  installAlignment: engine => ipcRenderer.invoke('studio:install-alignment', engine),
   onAlignmentProgress: listener => {
     const onProgress = (_event, progress) => listener(progress);
     ipcRenderer.on('studio:alignment-progress', onProgress);
@@ -51,7 +51,7 @@ contextBridge.exposeInMainWorld('studio', {
   saveIntegrationKey: input => ipcRenderer.invoke('studio:save-integration-key', input),
   removeIntegrationKey: id => ipcRenderer.invoke('studio:remove-integration-key', id),
   verifyDango: () => ipcRenderer.invoke('studio:verify-dango'),
-  verifyIntegration: adapter => ipcRenderer.invoke('studio:verify-integration', adapter),
+  verifyIntegration: provider => ipcRenderer.invoke('studio:verify-integration', provider),
   openIntegrationWebsite: id => ipcRenderer.invoke('studio:integration-website', id),
   startRecovery: () => ipcRenderer.invoke('studio:recovery-start'),
   updateRecovery: draft => ipcRenderer.invoke('studio:recovery-update', draft),

@@ -12,7 +12,7 @@ import separatorModels from '../main/separator-models.cjs';
 import dango from '../main/dango-separator.cjs';
 import cloud from '../main/cloud-separators.cjs';
 import modelLibrary from '../main/model-library.cjs';
-import studioOptions from '../domain/studio-options.json';
+import { alignmentEngines, alignmentLanguageFor, isAlignmentEngine, isCloudAlignmentEngine } from '../domain/alignment-engines.ts';
 import { toAss, toLrc, toLyricsJson, toSrt } from '../domain/lyrics-formats.ts';
 import { toPortableKitProject } from '../domain/project.ts';
 import { addProjectStems, loadProject, projectCommand, projectFile, projectRevision, saveProject } from './project-commands.mjs';
@@ -42,9 +42,9 @@ const commands = {
   'lyrics word': ' <line> <word> [--start <seconds>] [--end <seconds>]',
   'lyrics download': ' [--artist <artist>] [--title <title>] [--album <album>] [--duration <seconds>] [--source <source>] [--output-dir <directory>] [--ktools-home <directory>] [--python <exe>] [--input-lyrics <file>] [--no-format] [--force] [--import] [--use <plain|formatted|synced>]',
   'lyrics format': ' --lyrics <file> --output <file> [--min-length <characters>] [--target-length <characters>] [--max-length <characters>] [--candidate <number>] [--force]',
-  'lyrics align': ' [--audio <file>] [--lyrics <file>] [--output <file.lrc|file.srt|file.json>] [--language <code>] [--python <exe>] [--force]',
-  'lyrics setup': ' [--status]',
-  'lyrics languages': '',
+  'lyrics align': ' [--audio <file>] [--lyrics <file>] [--output <file.lrc|file.srt|file.json>] [--engine <whisperx|qwen|vultr|audioshake>] [--language <code>] [--python <exe>] [--approve-cloud] [--force]',
+  'lyrics setup': ' [--engine <whisperx|qwen>] [--status]',
+  'lyrics languages': ' [--engine <whisperx|qwen|vultr|audioshake>]',
   'export lyrics': ' <json|lrc|srt|cdg> --output <file> [--force] [--original] [--ffmpeg <exe>]',
   'export video': ' --output <file> [--ffmpeg <exe>] [--force]',
   'export kit': ' --output <file> [--force]',
@@ -223,36 +223,58 @@ async function align(args, settings) {
   }
   if (options.project !== undefined) requiredOption(options, 'project');
   if (options.force && !options.output) usage('--force requires --output.');
-  const language = String(args.options.language ?? settings.alignmentLanguage ?? 'en').trim().toLowerCase();
-  if (!studioOptions.alignmentLanguages.includes(language)) usage('Choose a supported lyric language with ' + commandName + ' lyrics languages.');
+  const engine = selectedAlignmentEngine(options, settings);
+  const language = options.language === undefined ? alignmentLanguageFor(engine, settings.alignmentLanguage) || 'en'
+    : alignmentLanguageFor(engine, options.language);
+  if (!language) usage('Choose a supported lyric language with ' + commandName + ' lyrics languages --engine ' + engine + '.');
+  const request = {
+    file: !supplied || options.project ? projectFile(args) : null,
+    lyricsFile: options.lyrics, audio: options.audio, output: options.output, force: options.force,
+    language, preferences: settingsFile(options),
+  };
+  if (isCloudAlignmentEngine(engine)) {
+    const service = alignmentEngines[engine].label;
+    if (options.python !== undefined) usage('--python applies only to local AI Sync engines.');
+    if (!options['approve-cloud']) usage(service + ' uploads your audio and lyrics and may incur a charge. Confirm with --approve-cloud.');
+    const variable = engine === 'vultr' ? 'VULTR_INFERENCE_API_KEY' : 'AUDIOSHAKE_API_KEY';
+    const key = process.env[variable];
+    if (!key?.trim()) usage('Set ' + variable + ' in the environment to connect to ' + service + '.');
+    return alignLyricsFromFiles(request, async input => operations.runCloudAlignment(await operations.prepareAlignmentInput(input, engine), key, settings.ffmpegPath));
+  }
   const configured = settings.lyricAlignerExecutable;
   const legacyDefault = /^python3?(?:\.exe)?$/i.test(configured);
   const packagedScript = path.join(__dirname, 'scripts', 'align_lyrics.py');
   const script = await access(packagedScript).then(() => packagedScript, () => path.join(__dirname, '..', 'scripts', 'align_lyrics.py'));
-  const prepare = () => options.python || (!legacyDefault && configured)
-    || alignmentRuntime.ensureAlignmentRuntime(alignmentRuntime.alignmentRuntimeRoot(), alignmentProgress(args));
-  return alignLyricsFromFiles({
-    file: !supplied || options.project ? projectFile(args) : null,
-    lyricsFile: options.lyrics, audio: options.audio, output: options.output, force: options.force,
-    language, preferences: settingsFile(options),
-  }, input => operations.alignLyrics(input, script, prepare));
+  const prepare = () => options.python || (engine === 'whisperx' && !legacyDefault && configured)
+    || alignmentRuntime.ensureAlignmentRuntime(alignmentRuntime.alignmentRuntimeRoot(), alignmentProgress(args), engine);
+  return alignLyricsFromFiles(request, input => operations.alignLyrics(input, script, prepare, engine));
+}
+
+function selectedAlignmentEngine(options, settings) {
+  const engine = options.engine ?? settings.alignmentEngine;
+  if (!isAlignmentEngine(engine)) usage('Choose an AI Sync engine: whisperx, qwen, vultr, or audioshake.');
+  return engine;
 }
 
 function alignmentProgress(args) {
   return args.options.json ? undefined : progress => console.error(progress.message);
 }
 
-async function alignmentSetup(args) {
+async function alignmentSetup(args, settings) {
   positionals(args, 0);
+  const engine = selectedAlignmentEngine(args.options, settings);
+  if (isCloudAlignmentEngine(engine)) usage('Choose whisperx or qwen for local setup. Cloud engines use API keys.');
   const root = alignmentRuntime.alignmentRuntimeRoot();
-  if (!args.options.status) await alignmentRuntime.ensureAlignmentRuntime(root, alignmentProgress(args));
-  return alignmentRuntime.alignmentRuntimeStatus(root);
+  if (!args.options.status) await alignmentRuntime.ensureAlignmentRuntime(root, alignmentProgress(args), engine);
+  return alignmentRuntime.alignmentRuntimeStatus(root, engine);
 }
 
-function alignmentLanguages(args) {
+function alignmentLanguages(args, settings) {
   positionals(args, 0);
+  const engine = selectedAlignmentEngine(args.options, settings);
+  if (engine === 'audioshake') return [{ code: 'auto', name: 'Automatic' }];
   const names = new Intl.DisplayNames(['en'], { type: 'language' });
-  return studioOptions.alignmentLanguages.map(code => ({ code, name: names.of(code) }));
+  return alignmentEngines[engine].languages.map(code => ({ code, name: names.of(code) }));
 }
 
 function separationOptions(args, settings) {
@@ -366,6 +388,9 @@ async function dispatch(command, args) {
       next.separatorExecutable = operations.separationDefaults[value].executable;
       next.separatorModel = operations.separationDefaults[value].model;
     }
+    if (key === 'alignmentEngine' && isAlignmentEngine(value) && !alignmentLanguageFor(value, settings.alignmentLanguage)) {
+      next.alignmentLanguage = 'en';
+    }
     return { path: preferences, settings: operations.saveSettings(preferences, next) };
   }
   if (group === 'export') return exportProject(action, args, settings);
@@ -401,8 +426,8 @@ async function dispatch(command, args) {
     });
   }
   if (command === 'lyrics align') return align(args, settings);
-  if (command === 'lyrics setup') return alignmentSetup(args);
-  if (command === 'lyrics languages') return alignmentLanguages(args);
+  if (command === 'lyrics setup') return alignmentSetup(args, settings);
+  if (command === 'lyrics languages') return alignmentLanguages(args, settings);
   return projectCommand(group, action, args, dependencies);
 }
 

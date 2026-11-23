@@ -4,13 +4,15 @@ const { readFileSync, rmSync } = require('node:fs');
 const { randomUUID } = require('node:crypto');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { AUDIO_EXTENSIONS, BACKGROUND_EXTENSIONS, cloudAdapter, text, localFile, readCdg, exportKit, exportVideo, exportCdg, createGifPreview, separate, alignLyrics, writeOutput } = require('./studio-operations.cjs');
+const { AUDIO_EXTENSIONS, BACKGROUND_EXTENSIONS, cloudAdapter, text, localFile, readCdg, exportKit, exportVideo, exportCdg, createGifPreview, separate, alignLyrics, prepareAlignmentInput, runCloudAlignment, writeOutput } = require('./studio-operations.cjs');
 const { validateVoiceRecording } = require('../domain/voice-recording.ts');
 const { loadProject, projectRevision, saveProject } = require('../domain/project-file.mjs');
 const { createRecoveryStore } = require('./recovery.cjs');
 const { importKit } = require('./kit-import.cjs');
 const { serveStudioMedia } = require('./media-protocol.cjs');
 const { alignmentRuntimeRoot, alignmentRuntimeStatus, ensureAlignmentRuntime } = require('./alignment-runtime.cjs');
+const { alignmentEngines, isCloudAlignmentEngine } = require('../domain/alignment-engines.ts');
+const { testCloudAlignmentConnection } = require('./cloud-alignment.cjs');
 const { discoverModels } = require('./separator-models.cjs');
 const { createIntegrationCatalog } = require('./integration-catalog.cjs');
 const { createIntegrationSecrets } = require('./integration-secrets.cjs');
@@ -123,6 +125,11 @@ function registerIntegrations(directory) {
   handleEditor('studio:remove-integration', (_event, id) => catalog.remove(id));
   async function credentials(adapter) {
     if (adapter === 'dango') return dangoCredentials();
+    if (isCloudAlignmentEngine(adapter)) {
+      const key = await catalog.readKey(adapter);
+      if (!key) throw new Error('Add your ' + (adapter === 'vultr' ? 'Vultr' : 'AudioShake') + ' API key in Preferences → Integrations.');
+      return key;
+    }
     if (!Object.hasOwn(cloudSeparators, adapter)) throw new Error('Choose a supported cloud separator.');
     const key = await catalog.readKey(adapter);
     const provider = cloudSeparators[adapter];
@@ -140,6 +147,7 @@ function registerIntegrations(directory) {
   handleEditor('studio:verify-dango', async () => checkDangoConnection(await dangoCredentials()));
   handleEditor('studio:verify-integration', async (_event, adapter) => {
     const key = await credentials(adapter);
+    if (isCloudAlignmentEngine(adapter)) return testCloudAlignmentConnection(adapter, key);
     return adapter === 'dango' ? checkDangoConnection(key) : cloudSeparators[adapter].verify(key);
   });
   handleEditor('studio:integration-website', async (_event, id) => {
@@ -328,10 +336,15 @@ app.whenReady().then(() => {
     if (failure) throw new Error('Studio could not open the models folder.');
   });
   handleEditor('studio:separator-models', (_event, input) => discoverModels(input));
-  handleEditor('studio:alignment-status', () => alignmentRuntimeStatus(alignmentRuntimeRoot()));
-  handleEditor('studio:install-alignment', async event => {
-    await ensureAlignmentRuntime(alignmentRuntimeRoot(), alignmentProgress(event));
-    return alignmentRuntimeStatus(alignmentRuntimeRoot());
+  const localAlignmentEngine = (engine = 'whisperx') => {
+    if (engine !== 'whisperx' && engine !== 'qwen') throw new Error('Choose a local AI Sync engine.');
+    return engine;
+  };
+  handleEditor('studio:alignment-status', (_event, engine) => alignmentRuntimeStatus(alignmentRuntimeRoot(), localAlignmentEngine(engine)));
+  handleEditor('studio:install-alignment', async (event, selected) => {
+    const engine = localAlignmentEngine(selected);
+    await ensureAlignmentRuntime(alignmentRuntimeRoot(), alignmentProgress(event), engine);
+    return alignmentRuntimeStatus(alignmentRuntimeRoot(), engine);
   });
   ipcMain.handle('studio:recovery-start', async () => {
     // A restarted renderer adopts a fresh draft, leaving its prior edits available.
@@ -466,16 +479,33 @@ app.whenReady().then(() => {
         : await cloudSeparators[adapter].separate(options);
     } finally { separationBusy = false; }
   }));
-  handleEditor('studio:align-lyrics', trackProjectOperation((event, input) => {
-    const script = app.isPackaged
-      ? path.join(process.resourcesPath, 'scripts', 'align_lyrics.py')
-      : path.join(app.getAppPath(), 'scripts', 'align_lyrics.py');
-    const report = alignmentProgress(event);
-    return alignLyrics(input, script, async () => {
-      const executable = await ensureAlignmentRuntime(alignmentRuntimeRoot(), report);
-      report({ phase: 'aligning', message: 'Synchronizing lyrics locally. The first run downloads the language model…' });
-      return executable;
-    });
+  let alignmentBusy = false;
+  handleEditor('studio:align-lyrics', trackProjectOperation(async (event, input) => {
+    if (alignmentBusy) throw new Error('AI Sync is already running.');
+    alignmentBusy = true;
+    try {
+      const { alignmentEngine: engine, ffmpegPath } = preferences.get();
+      const report = alignmentProgress(event);
+      if (isCloudAlignmentEngine(engine)) {
+        const request = await prepareAlignmentInput(input, engine);
+        const key = await integrationCredentials(engine);
+        const service = engine === 'vultr' ? 'Vultr Aligner 1' : 'AudioShake';
+        const { response } = await dialog.showMessageBox(mainWindow, {
+          type: 'warning', buttons: ['Cancel', 'Upload and Sync'], defaultId: 0, cancelId: 0,
+          title: service + ' Lyric Synchronization', message: 'Upload ' + path.basename(request.audioPath) + ' and its lyrics to ' + service + '?',
+          detail: 'The service processes the audio and supplied lyric text online. This request may incur a charge on your account.',
+        });
+        if (response !== 1 || !isEditorFrame(event)) return null;
+        report({ phase: 'aligning', message: 'Synchronizing your supplied lyrics with ' + service + '…' });
+        return await runCloudAlignment(request, key, ffmpegPath);
+      }
+      const script = path.join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'scripts', 'align_lyrics.py');
+      return await alignLyrics(input, script, async () => {
+        const executable = await ensureAlignmentRuntime(alignmentRuntimeRoot(), report, engine);
+        report({ phase: 'aligning', message: 'Synchronizing lyrics with ' + alignmentEngines[engine].label + '. The first run downloads the model…' });
+        return executable;
+      }, engine);
+    } finally { alignmentBusy = false; }
   }));
   createWindow();
   void updates.check();

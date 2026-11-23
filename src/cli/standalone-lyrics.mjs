@@ -118,7 +118,8 @@ export async function alignLyricsFromFiles({
     title: prior?.title ?? (input?.title || path.parse(audioPath).name),
     artist: prior?.artist ?? (input?.artist || ''),
   };
-  const summary = { project: projectFile, audio: audioPath, alignedWords: result.words.length };
+  const summary = { project: projectFile, audio: audioPath, alignedWords: result.words.length,
+    ...(result.reviewLineIndexes?.length ? { reviewLines: result.reviewLineIndexes.map(index => index + 1) } : {}) };
   if (projectFile) {
     if (lyricsFile && !updated.stems.length) {
       updated = await addProjectStems(updated, [audioPath], { durationSeconds: result.duration });
