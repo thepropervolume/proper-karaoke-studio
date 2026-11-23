@@ -2,7 +2,7 @@
 
 The Proper Volume Karaoke Studio is a desktop authoring app for turning audio stems and timed lyrics into karaoke videos and reusable TPV kits.
 
-## Studio 0.11.5
+## Studio 0.11.6
 
 Studio imports and mixes local stems, previews and styles lyrics, synchronizes supplied lyrics to audio, and exports MP4 videos, lyric files, and TPV kits. The desktop editor and CLI share editable project files. The `tpv-karaoke-studio` CLI can also format lyrics, separate stems, and align lyrics without an existing project.
 
