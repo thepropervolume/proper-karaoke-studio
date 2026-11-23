@@ -87,6 +87,11 @@
     "linux": {
       "icon": "assets/branding/linux",
       "category": "AudioVideo",
+      "desktop": {
+        "entry": {
+          "Keywords": "TPV;Proper;Proper Volume;The Proper Volume;Karaoke;Karaoke App;Studio;Builder Studio;Karaoke Studio;Lyrics;Synchronize;LRC;CDG;SRT;"
+        }
+      },
       "target": [
         "AppImage",
         "deb"
@@ -101,6 +106,7 @@
       "icon": "assets/branding/app.icns",
       "category": "public.app-category.music",
       "extendInfo": {
+        "MDItemKeywords": "TPV, Proper, Proper Volume, The Proper Volume, Karaoke, Karaoke App, Studio, Builder Studio, Karaoke Studio, Lyrics, Synchronize, LRC, CDG, SRT",
         "NSMicrophoneUsageDescription": "Studio records voice stems when you start a microphone take."
       },
       "target": [
