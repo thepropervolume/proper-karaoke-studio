@@ -1195,9 +1195,11 @@ export function App() {
                 {canSplit && selectedCue?.id === line.id && <button type="button" className="split-cue-words small-button"
                   data-tip="Create timings for the words and slash-delimited parts in this line. Without a known duration, the timing fields start blank."
                   onClick={splitSelectedCue}>Split Line into Word Timings</button>}
-                {words.length > 0 && <details className="word-cues" open={timingWords || expandedWordCues.has(line.id)}
-                  onToggle={event => { if (!timingWords) setWordsOpen(line.id, event.currentTarget.open); }}>
-                  <summary>Word timings · {words.length}</summary>
+                {words.length > 0 && <details className="word-cues" open={timingWords || expandedWordCues.has(line.id)}>
+                  <summary onClick={event => {
+                    event.preventDefault();
+                    if (!timingWords) setWordsOpen(line.id, !expandedWordCues.has(line.id));
+                  }}>Word timings · {words.length}</summary>
                   {words.map((word, wordIndex) => <div className={'word-cue' + (timingWords && timingTarget.word === wordIndex ? ' active' : '')} key={wordIndex}>
                     <span className="word-label" title={word.text}>{word.text.trim() || ' '}</span>
                     {(['startSeconds', 'endSeconds'] as const).map(field => {
