@@ -1,4 +1,5 @@
 import type { LyricLine } from './project';
+import { lyricTimingTokens, lyricWordTokens, remapTimedWords } from './lyric-timing-text';
 
 export type ForcedAlignedWord = { word: string; start: number; end: number };
 
@@ -8,7 +9,7 @@ function comparable(value: string): string {
 
 /** Apply timestamps from a forced aligner while preserving the user's exact lyric text and line breaks. */
 export function applyForcedAlignment(lines: readonly LyricLine[], aligned: readonly ForcedAlignedWord[], duration: number): LyricLine[] {
-  const tokens = lines.flatMap((line, lineIndex) => (line.text.match(/\S+\s*/g) ?? []).map(text => ({ lineIndex, text })));
+  const tokens = lines.flatMap((line, lineIndex) => lyricWordTokens(line.text).map(text => ({ lineIndex, text })));
   if (!tokens.length) throw new Error('Add lyric text before synchronizing.');
   if (aligned.length !== tokens.length) {
     throw new Error(`The aligner returned ${aligned.length} word timings for ${tokens.length} lyric words. Try a vocal stem or correct the lyrics, then try again.`);
@@ -29,6 +30,11 @@ export function applyForcedAlignment(lines: readonly LyricLine[], aligned: reado
   return lines.map((line, lineIndex) => {
     const lineWords = words.filter(word => word.lineIndex === lineIndex).map(({ text, startSeconds, endSeconds }) => ({ text, startSeconds, endSeconds }));
     if (!lineWords.length) return { ...line, words: [] };
-    return { ...line, startSeconds: lineWords[0].startSeconds, endSeconds: lineWords.at(-1)!.endSeconds, words: lineWords };
+    // The aligner matches sung words. Keep the editor's splits within each newly aligned interval.
+    const fragments = remapTimedWords(lineWords, lyricTimingTokens(line));
+    return {
+      ...line, startSeconds: lineWords[0].startSeconds, endSeconds: lineWords.at(-1)!.endSeconds,
+      words: fragments.length ? fragments : lineWords,
+    };
   });
 }

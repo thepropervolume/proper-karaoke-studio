@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
 import { KaraFunPlayer as KaraokePlayer, type KaraFunPlayerEvent as KaraokePlayerEvent, type KaraFunStemSource as KaraokeStemSource } from '../shared/from-booth/display/karafun-player';
 import { paintKaraFunLyrics } from '../shared/from-booth/display/karafun-lyrics';
 import { newLyricLines, toPortableKitProject, toRenderTiming, type LyricLine, type StudioProject, type StudioRole, type StudioStem } from '../domain/project';
-import { completeTimingSession, completedDraftWords, lyricWordTokens, normalizeWordTimingDrafts, recordTimingTap, splitLineWords, startTimingSession,
+import { completeTimingSession, completedDraftWords, normalizeWordTimingDrafts, recordTimingTap, splitLineWords, startTimingSession,
   stepTimingHistory, timingPosition, type CaptureMode, type TimingField, type TimingSession, type WordTimingDrafts } from '../domain/manual-timing';
+import { editLyricTimingText, lyricTimingInput, lyricTimingTokens } from '../domain/lyric-timing-text';
 import { parseLyricsFile, toAss, toLrc, toLyricsJson, toSrt } from '../domain/lyrics-formats';
 import { formatLyricText, MAXIMUM_LYRIC_TEXT_BYTES, readLyricVersions, type LyricFormatOptions, type LyricVersion } from '../domain/lyric-format';
 import { applyForcedAlignment } from '../domain/forced-alignment';
@@ -131,6 +132,9 @@ export function App() {
   const [wordTimingDrafts, setWordTimingDrafts] = useState<WordTimingDrafts>({});
   const [selectedCueId, setSelectedCueId] = useState<string>();
   const [expandedWordCues, setExpandedWordCues] = useState<Set<string>>(() => new Set());
+  const [timelineCue, setTimelineCue] = useState<{ id: string }>();
+  const inspectorRef = useRef<HTMLElement>(null);
+  const timelineCueRef = useRef<HTMLElement>(null);
   const [draftPending, setDraftPending] = useState(false);
   const [lyricFormatOverride, setLyricFormatOverride] = useState<LyricFormatOptions | null>(null);
   const [lyricVersions, setLyricVersions] = useState<{ name: string; items: LyricVersion[] } | null>(null);
@@ -201,6 +205,13 @@ export function App() {
 
   useEffect(() => { stemRef.current = stems; }, [stems]);
   useEffect(() => { linesRef.current = lines; }, [lines]);
+  useLayoutEffect(() => {
+    const inspector = inspectorRef.current;
+    const row = timelineCueRef.current;
+    if (!inspector || !row) return;
+    // Wait until the workspace and its expanded timing fields have been rendered.
+    inspector.scrollTop += row.getBoundingClientRect().top - inspector.getBoundingClientRect().top;
+  }, [timelineCue]);
   const renderTiming = useMemo(() => toRenderTiming(lines, duration, lyricStyle), [lines, duration, lyricStyle]);
   const cdgPlayer = lines.length ? null : decodedCdg;
   const previewDuration = duration || cdgPlayer?.durationSeconds || 0;
@@ -311,10 +322,11 @@ export function App() {
     setWordTimingDrafts(project.wordTimingDrafts ?? {});
     setSelectedCueId(undefined);
     setExpandedWordCues(new Set());
+    setTimelineCue(undefined);
     setLyricFormatOverride(null);
     setLyricVersions(null);
     setLyricStyle(normalizeLyricStyle(project.lyricStyle));
-    setLyricsDraft(draft ?? project.lyrics.map(line => line.text).join('\n'));
+    setLyricsDraft(draft ?? project.lyrics.map(lyricTimingInput).join('\n'));
     setDraftPending(draft !== null);
     setWorkspace(project.lyrics.length || project.importedCdg || draft ? 'lyrics' : 'audio');
     setDraftOpen(!project.lyrics.length || draft !== null);
@@ -454,7 +466,8 @@ export function App() {
   }));
   const setMasterVolume = (value: number) => { setVolume(value); if (generation.current) player.current?.setVolume(generation.current, value); };
 
-  const cueText = normalizedCueText(lines.map(line => line.text).join('\n'));
+  const lyricInputs = useMemo(() => lines.map(lyricTimingInput), [lines]);
+  const cueText = normalizedCueText(lyricInputs.join('\n'));
   const formatterOptions = lyricFormatOverride ?? settings.lyricFormat;
   const setLyricText = (text: string) => {
     setLyricsDraft(text);
@@ -582,6 +595,13 @@ export function App() {
       return next;
     });
   };
+  const revealTimelineCue = (lineId: string | undefined) => {
+    setSelectedCueId(lineId);
+    if (!lineId) return;
+    setWorkspace('lyrics');
+    setWordsOpen(lineId, true);
+    setTimelineCue({ id: lineId });
+  };
   const splitCue = (lineId: string) => {
     if (timingSessionRef.current || busy || Object.hasOwn(wordTimingDrafts, lineId)) return;
     const index = lines.findIndex(line => line.id === lineId);
@@ -603,9 +623,14 @@ export function App() {
       if (line.id !== id) return line;
       const startSeconds = Number.isFinite(patch.startSeconds) ? Math.max(0, patch.startSeconds!) : line.startSeconds;
       const endSeconds = Math.max(startSeconds, Number.isFinite(patch.endSeconds) ? patch.endSeconds! : line.endSeconds);
-      // Text edits invalidate word-level timings for the old text.
-      return { ...line, ...patch, startSeconds, endSeconds, ...(patch.text !== undefined && patch.text !== line.text ? { words: [] } : {}) };
+      return { ...line, ...patch, startSeconds, endSeconds };
     }));
+  };
+  const updateCueText = (line: LyricLine, input: string) => {
+    const next = editLyricTimingText(line, input);
+    if (next === line) return;
+    if (next.words.length > line.words.length) setWordsOpen(line.id, true);
+    updateLine(line.id, { text: next.text, timingText: next.timingText, words: next.words });
   };
   const updateWord = (lineId: string, wordIndex: number, field: 'startSeconds' | 'endSeconds', value: number) => {
     if (!Number.isFinite(value)) return;
@@ -622,7 +647,7 @@ export function App() {
     const current = wordTimingDrafts[line.id];
     if (!current?.[wordIndex]) return;
     const draft = current.map((word, index) => index === wordIndex ? { ...word, [field]: value } : word);
-    const completed = completedDraftWords(line.text, draft);
+    const completed = completedDraftWords(line, draft);
     if (completed) {
       updateLine(line.id, { words: completed, startSeconds: Math.min(...completed.map(word => word.startSeconds)),
         endSeconds: Math.max(...completed.map(word => word.endSeconds)) });
@@ -641,7 +666,7 @@ export function App() {
   };
   const useLyricVersion = (version: LyricVersion, name: string) => {
     setLyricVersions(null);
-    setLyricText(version.text);
+    setLyricText(version.text.replaceAll('/', '\\/'));
     setDraftOpen(true);
     if (version.track) setTitle(current => current || version.track || '');
     if (version.artist) setArtist(current => current || version.artist || '');
@@ -699,7 +724,7 @@ export function App() {
       setSelectedCueId(undefined);
       if (imported.title) setTitle(imported.title);
       if (imported.artist) setArtist(imported.artist);
-      setLyricsDraft(imported.lines.map(line => line.text).join('\n'));
+      setLyricsDraft(imported.lines.map(lyricTimingInput).join('\n'));
       setDraftPending(false);
       setDraftOpen(false);
       setStatus('Imported ' + imported.lines.length + ' lyric cues from ' + file.name + '.');
@@ -1032,7 +1057,7 @@ export function App() {
 
       <WorkspaceSeparator width={inspectorWidth} maximum={inspectorMaximum} resize={resizeInspector} />
 
-      <aside className="panel inspector" id="editor-panel" aria-label={workspaces.find(item => item.id === workspace)?.label}>
+      <aside ref={inspectorRef} className="panel inspector" id="editor-panel" aria-label={workspaces.find(item => item.id === workspace)?.label}>
         {workspace === 'audio' && <>
           <div className="page-heading">
             <div><div className="eyebrow">Project Audio</div><h2>Audio Stems</h2></div>
@@ -1110,6 +1135,7 @@ export function App() {
                 <button type="button" onClick={() => setLyricVersions(null)}>Cancel</button>
               </div>}
               <textarea rows={5} className="small-input" aria-label="Lyrics text" placeholder="Paste lyrics or import a text file" value={lyricsDraft}
+                data-tip={'Use / to split a word into timing cues. Type \\/ for a visible slash.'}
                 onChange={event => setLyricText(event.target.value)} />
               <LyricFormatFields value={formatterOptions} onChange={setLyricFormatOverride} disabled={busy || timing} />
               <div className="toolbar">
@@ -1140,11 +1166,12 @@ export function App() {
               const draft = Object.hasOwn(wordTimingDrafts, line.id) ? wordTimingDrafts[line.id] : undefined;
               const timingWords = timingTarget?.line === index && timingTarget.word !== undefined;
               const words = line.words.length ? line.words : timingWords ? timingSession?.prepared[index].words ?? []
-                : draft ? lyricWordTokens(line.text).map((text, index) => ({ text, ...draft[index] })) : [];
+                : draft ? lyricTimingTokens(line).map((text, index) => ({ text, ...draft[index] })) : [];
               const canSplit = !timing && !busy && !words.length && Boolean(line.text.trim());
               const split = canSplit ? () => splitCue(line.id) : undefined;
               const selectCue = () => setSelectedCueId(line.id);
               return <article className={'cue-block' + ((timing ? index === timingTarget?.line : index === activeCue) ? ' active' : '')}
+                ref={timelineCue?.id === line.id ? timelineCueRef : undefined}
                 data-selected={selectedCue?.id === line.id} key={line.id} onFocusCapture={selectCue} onClick={selectCue}
                 onContextMenu={event => {
                   if (!split || event.target instanceof HTMLInputElement) return;
@@ -1155,8 +1182,9 @@ export function App() {
                 <button type="button" className="cue-number" disabled={busy || timing} onClick={() => seek(line.startSeconds)} aria-label={'Seek to cue ' + (index + 1)}>
                   {String(index + 1).padStart(2, '0')}
                 </button>
-                <input className="cue-text" aria-label={'Lyric line ' + (index + 1)} value={line.text} disabled={busy || timing}
-                  onChange={event => updateLine(line.id, { text: event.target.value })} />
+                <input className="cue-text" aria-label={'Lyric line ' + (index + 1)} value={lyricInputs[index]} disabled={busy || timing}
+                  data-tip={'Use / to split a word into timing cues. Type \\/ for a visible slash.'}
+                  onChange={event => updateCueText(line, event.target.value)} />
                 <div className="cue-times">
                   {(['startSeconds', 'endSeconds'] as const).map(field => <input key={field}
                     aria-label={'Line ' + (index + 1) + ' ' + (field === 'startSeconds' ? 'start' : 'end')} type="number" min="0" step="0.001"
@@ -1165,7 +1193,7 @@ export function App() {
                     onContextMenu={event => void timingFieldMenu(event, time => updateLine(line.id, { [field]: time }), split)} />)}
                 </div>
                 {canSplit && selectedCue?.id === line.id && <button type="button" className="split-cue-words small-button"
-                  data-tip="Divide this line into evenly spaced words using its timing, or leave the word times blank if no duration is available."
+                  data-tip="Create timings for the words and slash-delimited parts in this line. Without a known duration, the timing fields start blank."
                   onClick={splitSelectedCue}>Split Line into Word Timings</button>}
                 {words.length > 0 && <details className="word-cues" open={timingWords || expandedWordCues.has(line.id)}
                   onToggle={event => { if (!timingWords) setWordsOpen(line.id, event.currentTarget.open); }}>
@@ -1221,7 +1249,7 @@ export function App() {
 
       <section className="transport" aria-label="Playback and timeline">
         {waveform && <WaveformTimeline overview={waveform} duration={previewDuration} position={position} lines={lines}
-          disabled={busy || timing} seek={seek} moveCue={moveCue} onCueSelection={setSelectedCueId} appearance={appearance.theme + ':' + appearance.accent} />}
+          disabled={busy || timing} seek={seek} moveCue={moveCue} onCueSelection={revealTimelineCue} appearance={appearance.theme + ':' + appearance.accent} />}
         {timingSession && <div className="capture-bar row">
           <span className="status-dot live" aria-hidden="true" />
           <span className="grow">Capturing {timingSession.mode} timing</span>

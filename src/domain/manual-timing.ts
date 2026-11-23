@@ -1,5 +1,6 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. */
 import { seedTimedWords, type LyricLine, type TimedWord } from './project';
+import { lyricTimingTokens } from './lyric-timing-text';
 
 export type CaptureMode = 'line' | 'word';
 export type TimingField = 'startSeconds' | 'endSeconds';
@@ -20,14 +21,9 @@ export function timingPosition(value: number): number {
   return Math.round(Math.max(0, Number.isFinite(value) ? value : 0) * 1000) / 1000;
 }
 
-export function lyricWordTokens(text: string): string[] {
-  // Include whitespace in the original text so splitting and joining remains lossless.
-  return text.match(/^\s*\S+\s*|\S+\s*/g) ?? [];
-}
-
 export function splitLineWords(lines: readonly LyricLine[], index: number): { words: TimedWord[]; draft: DraftWord[] } {
   const line = lines[index];
-  const tokens = lyricWordTokens(line.text);
+  const tokens = lyricTimingTokens(line);
   const hasSpan = line.endSeconds > line.startSeconds;
   const previous = lines[index - 1];
   const start = !hasSpan && line.startSeconds === 0 && previous?.endSeconds > 0 ? previous.endSeconds : line.startSeconds;
@@ -39,8 +35,8 @@ export function splitLineWords(lines: readonly LyricLine[], index: number): { wo
   })) };
 }
 
-export function completedDraftWords(text: string, draft: DraftWord[]): TimedWord[] | null {
-  const tokens = lyricWordTokens(text);
+export function completedDraftWords(line: LyricLine, draft: DraftWord[]): TimedWord[] | null {
+  const tokens = lyricTimingTokens(line);
   if (draft.length !== tokens.length || draft.some(({ startSeconds, endSeconds }) =>
     startSeconds === undefined || endSeconds === undefined || !Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) ||
     startSeconds < 0 || endSeconds < startSeconds)) return null;
@@ -53,7 +49,7 @@ export function normalizeWordTimingDrafts(input: unknown, lines: readonly LyricL
   return Object.fromEntries(lines.flatMap(line => {
     if (line.words.length || !Object.hasOwn(drafts, line.id)) return [];
     const value = drafts[line.id];
-    const count = lyricWordTokens(line.text).length;
+    const count = lyricTimingTokens(line).length;
     if (!Array.isArray(value) || !count || value.length !== count) return [];
     const words = value.map(word => {
       const result: DraftWord = {};

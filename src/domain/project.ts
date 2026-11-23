@@ -1,8 +1,10 @@
-import type { LyricLine, TimedWord } from '@thepropervolume/karaoke-core';
+import type { LyricLine as CoreLyricLine, TimedWord } from '@thepropervolume/karaoke-core';
 import { layoutLyrics, portableLyricFontPath, type LyricStyle } from './lyric-style';
+import { lyricTextFields, lyricTimingTokens } from './lyric-timing-text';
 import type { WordTimingDrafts } from './manual-timing';
 
-export type { LyricLine, TimedWord } from '@thepropervolume/karaoke-core';
+export type { TimedWord } from '@thepropervolume/karaoke-core';
+export type LyricLine = CoreLyricLine & { timingText?: string };
 
 export type StudioRole = 'instrumental' | 'lead' | 'backing' | 'other';
 export type StudioStem = {
@@ -17,10 +19,10 @@ export type StudioProject = {
 };
 
 export function newLyricLines(text: string, duration: number): LyricLine[] {
-  const source = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const source = text.split(/\r\n?|\n/).map(line => lyricTextFields(line.trim())).filter(line => line.text.trim());
   const cueDuration = Math.max(0.5, duration) / Math.max(1, source.length);
   return source.map((line, index) => ({
-    id: crypto.randomUUID(), text: line, startSeconds: cueDuration * index,
+    id: crypto.randomUUID(), ...line, startSeconds: cueDuration * index,
     endSeconds: Math.min(Math.max(0.5, duration), cueDuration * (index + 1)), words: [],
   }));
 }
@@ -30,7 +32,7 @@ export function seedTimedWords(lines: readonly LyricLine[]): LyricLine[] {
   return lines.map(line => {
     // Keep imported word cues when their text still matches the editable line.
     if (line.words.length && line.words.map(word => word.text).join('') === line.text) return line;
-    const tokens = line.text.match(/^\s*\S+\s*|\S+\s*/g) ?? [];
+    const tokens = lyricTimingTokens(line);
     if (!tokens.length) return { ...line, words: [] };
     const start = Math.max(0, line.startSeconds), end = Math.max(start + 0.05, line.endSeconds);
     const duration = (end - start) / tokens.length;

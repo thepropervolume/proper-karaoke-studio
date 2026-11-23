@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { basename, extname, resolve } from 'node:path';
 import { newLyricLines, seedTimedWords } from '../domain/project.ts';
+import { editLyricTimingText } from '../domain/lyric-timing-text.ts';
 import { parseLyricsFile, parseStamp } from '../domain/lyrics-formats.ts';
 import { mapJsonLyrics } from '../domain/json-lyric-mapping.ts';
 import { loadProject, projectRevision, projectSchema, saveProject, stemRoles } from '../domain/project-file.mjs';
@@ -243,8 +244,8 @@ async function runLyrics(action, project, positional, options) {
       count(positional, 1, 1, 'lyrics line <line ID or index> [--text <lyrics>] [--start <seconds>] [--end <seconds>]');
       const index = findIndex(project.lyrics, positional[0], 'line');
       const lyrics = project.lyrics.slice(), line = lyrics[index];
-      const text = option(options, 'text') ?? line.text;
-      lyrics[index] = withTiming({ ...line, text, words: text === line.text ? line.words : [] }, options);
+      const text = option(options, 'text');
+      lyrics[index] = withTiming(text === undefined ? line : editLyricTimingText(line, text), options);
       return { ...project, lyrics };
     }
     case 'word': {

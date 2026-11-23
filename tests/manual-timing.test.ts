@@ -60,8 +60,8 @@ test('splits evenly by an explicit or neighboring span and preserves genuinely b
   assert.deepEqual(project.wordTimingDrafts, { Unknown: [{ startSeconds: 0 }, {}] });
   assert.deepEqual(project.lyrics[0].words, []);
   assert.deepEqual(normalizeWordTimingDrafts({ Unknown: [{ startSeconds: Infinity }, { endSeconds: -1 }] }, rows), { Unknown: [{}, {}] });
-  assert.equal(completedDraftWords('Two words', [{ startSeconds: 0, endSeconds: 1 }, { startSeconds: 2 }]), null);
-  assert.deepEqual(completedDraftWords('Two words', [{ startSeconds: 0, endSeconds: 1 }, { startSeconds: 1, endSeconds: 2 }]), [
+  assert.equal(completedDraftWords(rows[0], [{ startSeconds: 0, endSeconds: 1 }, { startSeconds: 2 }]), null);
+  assert.deepEqual(completedDraftWords(rows[0], [{ startSeconds: 0, endSeconds: 1 }, { startSeconds: 1, endSeconds: 2 }]), [
     { text: 'Two ', startSeconds: 0, endSeconds: 1 }, { text: 'words', startSeconds: 1, endSeconds: 2 },
   ]);
 });

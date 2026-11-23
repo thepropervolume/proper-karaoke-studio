@@ -3,6 +3,7 @@ import { link, open, readFile, rename, rm } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import { normalizeLyricStyle } from './lyric-style.ts';
 import { normalizeWordTimingDrafts } from './manual-timing.ts';
+import { savedLyricTimingText } from './lyric-timing-text.ts';
 
 export const projectSchema = 'com.thepropervolume.karaoke-studio';
 export const stemRoles = ['instrumental', 'lead', 'backing', 'other'];
@@ -81,10 +82,12 @@ export function validateProject(input, projectPath) {
   const lyrics = value.lyrics.map((line, index) => {
     const label = `Lyric line ${index + 1}`;
     const fields = cue(line, label);
+    const timingText = savedLyricTimingText(fields.text, line.timingText);
     if (!Array.isArray(line.words)) throw new Error(`${label} is missing its word timings array.`);
     return {
       id: string(line.id, `${label} ID`),
       ...fields,
+      ...(timingText === undefined ? {} : { timingText }),
       words: line.words.map((word, wordIndex) => cue(word, `${label}, word ${wordIndex + 1}`)),
     };
   });

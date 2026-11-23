@@ -46,6 +46,8 @@ Reopen a portable kit into a new editable project. Studio extracts its media int
 
 Stem and line selectors accept IDs or one-based indexes. Word selectors use one-based indexes within a line. Numeric times are in seconds and manual cue inputs also accept `mm:ss.mmm`. FFmpeg measures imported audio unless you give `--duration`. Stem separation can optionally add its results to the project with `--add`. See the [lyric alignment guide](lyric-synchronization.md) and [stem separation guide](audio-separation.md) for their local runtime requirements.
 
+In plain-text lyrics and `lyrics line --text`, use `per/fect` to create two independently timed parts of `perfect`. Use `\/` for a visible slash. `lyrics word` addresses each timed part by its one-based index.
+
 Import a CD+G source with `lyrics import <file.cdg>`. Add its matching audio with `stems add` and use `export video` to render the graphics with audio. With editable lyric cues, `export lyrics cdg` draws a new graphics track. Add `--original` to copy the attached source byte for byte. The [CD+G guide](cdg.md) describes supported exports and playback.
 
 To import a timed lyric JSON file from another application, supply a [field mapping](json-lyric-import.md) with `lyrics import <file.json> --mapping <mapping.json>`. Studio lyrics JSON exports can be imported directly.

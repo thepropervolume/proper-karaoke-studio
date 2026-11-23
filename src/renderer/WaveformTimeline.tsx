@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { LyricLine } from '../domain/project';
 import { clamp, maxWaveformZoom, panWaveform, waveformZoomSteps, zoomWaveform, type WaveformViewport } from '../domain/waveform-viewport';
 import { StudioIcon } from './StudioIcon';
@@ -16,6 +16,8 @@ type Props = {
 };
 
 const width = 1024;
+const cueTop = .73;
+const cueHeight = .2;
 const defaultHeight = 108;
 const minHeight = 52;
 const storedHeightKey = 'tpv-studio-waveform-height';
@@ -45,6 +47,14 @@ export function WaveformTimeline({ overview, duration, position, lines, disabled
   const drawHeight = clamp(height, minHeight, maximumHeight);
   const xFor = (time: number) => (time - start) / span * width;
   const selectCue = (id: string) => { select(id); onCueSelection?.(id || undefined); };
+  const visibleCues = useMemo(() => {
+    if (!span) return [];
+    return lines.filter(line => line.endSeconds >= start && line.startSeconds < end).map(line => {
+      const left = Math.max(0, (line.startSeconds - start) / span * width);
+      const right = Math.min(width, (line.endSeconds - start) / span * width);
+      return { id: line.id, left, width: Math.max(right - left - 1, 2) };
+    });
+  }, [lines, span, start, end]);
 
   useEffect(() => {
     const resizeWindow = () => setWindowHeight(window.innerHeight);
@@ -102,18 +112,15 @@ export function WaveformTimeline({ overview, duration, position, lines, disabled
       const amplitude = Math.min(overview.peaks[index], 1) * drawHeight * .32;
       context.fillRect(x, drawHeight * .37 - amplitude, Math.max(2, secondsPerPeak / span * width), Math.max(1, amplitude * 2));
     }
-    for (const line of lines) {
-      if (line.endSeconds < start || line.startSeconds > end) continue;
-      const x = Math.max(0, (line.startSeconds - start) / span * width);
-      const right = Math.min(width, (line.endSeconds - start) / span * width);
-      context.fillStyle = line.id === selectedId ? accent : color('--waveform-cue', '#405b72');
-      context.fillRect(x, drawHeight * .73, Math.max(right - x - 1, 2), drawHeight * .2);
+    for (const cue of visibleCues) {
+      context.fillStyle = cue.id === selectedId ? accent : color('--waveform-cue', '#405b72');
+      context.fillRect(cue.left, drawHeight * cueTop, cue.width, drawHeight * cueHeight);
     }
     if (position >= start && position <= end) {
       context.fillStyle = color('--text', '#fff');
       context.fillRect((position - start) / span * width, 0, 2, drawHeight);
     }
-  }, [appearance, drawHeight, end, lines, overview, position, selectedId, span, start]);
+  }, [appearance, drawHeight, end, overview, position, selectedId, span, start, visibleCues]);
 
   const zoomTo = (value: number) => {
     const cursor = position >= start && position <= end ? (position - start) / span : .5;
@@ -196,9 +203,17 @@ export function WaveformTimeline({ overview, duration, position, lines, disabled
       if (disabled) return;
       const seconds = clamp(start + cursor * span, 0, duration);
       seek(seconds);
-      if ((event.clientY - bounds.top) / bounds.height > 0.69) {
-        const line = lines.find(entry => seconds >= entry.startSeconds && seconds <= entry.endSeconds);
-        if (line) selectCue(line.id);
+      const relativeY = (event.clientY - bounds.top - event.currentTarget.clientTop) / event.currentTarget.clientHeight;
+      if (relativeY >= cueTop && relativeY <= cueTop + cueHeight) {
+        const x = (event.clientX - bounds.left - event.currentTarget.clientLeft) / event.currentTarget.clientWidth * width;
+        // Match the topmost painted block, including the minimum width for short cues.
+        for (let index = visibleCues.length - 1; index >= 0; index--) {
+          const cue = visibleCues[index];
+          if (x >= cue.left && x < cue.left + cue.width) {
+            selectCue(cue.id);
+            break;
+          }
+        }
       }
     }} />
     {zoom > 1 && <input aria-label="Waveform viewport" type="range" min={0} max={duration - span} step="0.01" value={start}

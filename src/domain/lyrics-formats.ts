@@ -1,6 +1,7 @@
 import { parseLrc, parseSrt, toLrc as writeLrc, toSrt as writeSrt } from '@thepropervolume/karaoke-core';
 import type { LyricLine, TimedWord } from './project';
 import { layoutLyrics, lyricFontFamily, type LyricStyle } from './lyric-style';
+import { savedLyricTimingText } from './lyric-timing-text';
 
 export { parseLrc, parseSrt, parseStamp } from '@thepropervolume/karaoke-core';
 export type LyricsFormat = 'json' | 'lrc' | 'srt';
@@ -20,7 +21,9 @@ export function parseLyricsFile(name: string, content: string): { title?: string
     const lines = value.lyrics.map((line: any) => {
       if (typeof line.text !== 'string' || !Number.isFinite(line.startSeconds) || !Number.isFinite(line.endSeconds))
         throw new Error('The JSON file contains an invalid lyric line.');
-      return asLine(line.text, line.startSeconds, line.endSeconds, Array.isArray(line.words) ? line.words : []);
+      const cue = asLine(line.text, line.startSeconds, line.endSeconds, Array.isArray(line.words) ? line.words : []);
+      const timingText = savedLyricTimingText(cue.text, line.timingText);
+      return timingText === undefined ? cue : { ...cue, timingText };
     });
     return { title: typeof value.title === 'string' ? value.title : undefined, artist: typeof value.artist === 'string' ? value.artist : undefined, lines };
   }
