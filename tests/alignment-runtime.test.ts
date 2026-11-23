@@ -30,3 +30,26 @@ test('lyric setup recognizes only the managed environment and its matching recei
   await rm(executable);
   assert.equal((await runtime.alignmentRuntimeStatus(root)).state, unavailableState);
 });
+
+test('Qwen3 setup is isolated from the installed WhisperX environment', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'tpv-qwen-runtime-status-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const directory = path.join(root, 'alignment-qwen-cpu-v1');
+  const executable = process.platform === 'win32'
+    ? path.join(directory, 'venv', 'Scripts', 'python.exe')
+    : path.join(directory, 'venv', 'bin', 'python3');
+  const receipt = path.join(directory, 'ready.json');
+  const unavailableState = (await runtime.alignmentRuntimeStatus(root, 'qwen')).state;
+  assert.match(unavailableState, /^(missing|unsupported)$/);
+
+  await mkdir(path.dirname(executable), { recursive: true });
+  await writeFile(executable, 'Test fixture, must not run.');
+  await writeFile(receipt, JSON.stringify({ pythonVersion: '3.13.17', whisperxVersion: '3.7.9' }));
+  assert.equal((await runtime.alignmentRuntimeStatus(root, 'qwen')).state, unavailableState);
+
+  await writeFile(receipt, JSON.stringify({ pythonVersion: '3.13.17', transformersVersion: '5.24.0' }));
+  assert.equal((await runtime.alignmentRuntimeStatus(root, 'qwen')).state, 'ready');
+  assert.equal((await runtime.alignmentRuntimeStatus(root)).state, unavailableState);
+  assert.equal(await runtime.ensureAlignmentRuntime(root, undefined, 'qwen'), executable);
+  await assert.rejects(runtime.ensureAlignmentRuntime(root, undefined, 'other'), /supported local lyric alignment engine/);
+});

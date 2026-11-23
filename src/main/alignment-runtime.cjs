@@ -13,7 +13,21 @@ const yauzl = require('yauzl');
 const uvVersion = '0.13.7';
 const pythonVersion = '3.13.17';
 const whisperxVersion = '3.7.9';
-const runtimeName = 'alignment-runtime-cpu-v1';
+const transformersVersion = '5.24.0';
+const runtimes = {
+  whisperx: {
+    directory: 'alignment-runtime-cpu-v1', label: 'WhisperX', receipt: { pythonVersion, whisperxVersion },
+    torch: ['torch==2.8.0', 'torchaudio==2.8.0'],
+    packages: ['whisperx==' + whisperxVersion, 'faster-whisper==1.2.1', 'av==19.0.2'],
+    probe: 'import av, torch; from whisperx.alignment import align, load_align_model',
+  },
+  qwen: {
+    directory: 'alignment-qwen-cpu-v1', label: 'Qwen3 Forced Aligner', receipt: { pythonVersion, transformersVersion },
+    torch: ['torch==2.8.0'],
+    packages: ['transformers==' + transformersVersion, 'av==19.0.2', 'nagisa==0.2.11', 'soynlp==0.0.493'],
+    probe: 'import av, torch, nagisa; from soynlp.tokenizer import LTokenizer; from transformers.models.qwen3_asr import Qwen3ASRForTokenClassification, Qwen3ASRProcessor; assert hasattr(Qwen3ASRProcessor, "prepare_forced_aligner_inputs")',
+  },
+};
 const releaseBase = 'https://releases.astral.sh/github/uv/releases/download/';
 const maximumArchiveBytes = 60 * 1024 * 1024;
 const installerDownloadMs = 10 * 60 * 1000;
@@ -24,8 +38,6 @@ const uvAssets = {
   'linux:x64': ['x86_64-unknown-linux-gnu', 'tar.gz', 'c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83'],
   'darwin:arm64': ['aarch64-apple-darwin', 'tar.gz', '81b811b57e4624df7ed3aac148e0359100d9962f3d9dce00aec533dc2e086731'],
 };
-const audioEngineDependencies = ['torch==2.8.0', 'torchaudio==2.8.0'];
-const managedDependencies = ['whisperx==' + whisperxVersion, 'faster-whisper==1.2.1', 'av==19.0.2'];
 const packageRegistry = 'https://pypi.org/simple';
 const cpuRegistry = 'https://download.pytorch.org/whl/cpu';
 const openZip = promisify(yauzl.open);
@@ -39,10 +51,13 @@ function alignmentRuntimeRoot() {
   return path.join(data, 'tpv-karaoke-studio');
 }
 
-function runtimePaths(root) {
-  const directory = path.resolve(root, runtimeName);
+function runtimePaths(root, engine) {
+  if (!Object.hasOwn(runtimes, engine)) throw new Error('Choose a supported local lyric alignment engine.');
+  const runtime = runtimes[engine];
+  const directory = path.resolve(root, runtime.directory);
   const environment = path.join(directory, 'venv');
   return {
+    runtime,
     directory,
     environment,
     python: path.join(environment, ...(process.platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python3'])),
@@ -78,18 +93,18 @@ function unsupportedMessage() {
 async function isReady(paths) {
   try {
     const checked = JSON.parse(await fs.readFile(paths.marker, 'utf8'));
-    return checked.pythonVersion === pythonVersion && checked.whisperxVersion === whisperxVersion
+    return Object.entries(paths.runtime.receipt).every(([field, version]) => checked[field] === version)
       && (await fs.stat(paths.python)).isFile();
   } catch { return false; }
 }
 
-async function alignmentRuntimeStatus(root) {
-  const paths = runtimePaths(root);
-  if (await isReady(paths)) return { state: 'ready', message: 'Local lyric sync is ready.', pythonVersion };
+async function alignmentRuntimeStatus(root, engine = 'whisperx') {
+  const paths = runtimePaths(root, engine);
+  if (await isReady(paths)) return { state: 'ready', message: paths.runtime.label + ' lyric sync is ready.', pythonVersion };
   if (!uvAssets[process.platform + ':' + process.arch]) return { state: 'unsupported', message: unsupportedMessage() };
   const current = installations.get(paths.directory);
   if (current) return { state: 'installing', message: current.stage?.message || 'Preparing local lyric sync…' };
-  return { state: 'missing', message: 'Set up local lyric sync. Studio downloads a compatible runtime and model tools.' };
+  return { state: 'missing', message: 'Set up ' + paths.runtime.label + ' lyric sync. Studio downloads a compatible runtime and model tools.' };
 }
 
 async function downloadUv(asset, destination) {
@@ -209,6 +224,7 @@ async function takeLock(paths) {
 
 async function install(paths, report) {
   const asset = uvAssets[process.platform + ':' + process.arch];
+  const { label, receipt, torch, packages, probe } = paths.runtime;
   if (!asset) throw new Error(unsupportedMessage());
   await fs.mkdir(paths.directory, { recursive: true, mode: 0o700 });
   if (!await takeLock(paths)) return paths.python;
@@ -224,21 +240,20 @@ async function install(paths, report) {
     report('installing-packages', 'Installing the audio engine. This first download may take several minutes…');
     // Keep unrelated dependencies on PyPI rather than the dedicated PyTorch registry.
     const torchRegistry = process.platform === 'darwin' ? packageRegistry : cpuRegistry;
-    await runStep(uv, [...pip, '--no-deps', '--default-index', torchRegistry, ...audioEngineDependencies], env, 'Audio engine setup');
-    report('installing-packages', 'Installing WhisperX and checking the downloaded dependencies…');
-    await runStep(uv, [...pip, '--default-index', packageRegistry, ...audioEngineDependencies, ...managedDependencies], env, 'WhisperX setup');
+    await runStep(uv, [...pip, '--no-deps', '--default-index', torchRegistry, ...torch], env, 'Audio engine setup');
+    report('installing-packages', 'Installing ' + label + ' and checking the downloaded dependencies…');
+    await runStep(uv, [...pip, '--default-index', packageRegistry, ...torch, ...packages], env, label + ' setup');
     report('checking', 'Checking local lyric sync…');
-    const probe = 'import av, torch; from whisperx.alignment import align, load_align_model';
     await runStep(paths.python, ['-I', '-c', probe], env, 'Lyric sync verification');
-    await fs.writeFile(paths.marker, JSON.stringify({ pythonVersion, whisperxVersion }) + '\n', { mode: 0o600 });
+    await fs.writeFile(paths.marker, JSON.stringify(receipt) + '\n', { mode: 0o600 });
     return paths.python;
   } finally {
     await fs.unlink(paths.lock).catch(() => {});
   }
 }
 
-async function ensureAlignmentRuntime(root, onProgress) {
-  const paths = runtimePaths(root);
+async function ensureAlignmentRuntime(root, onProgress, engine = 'whisperx') {
+  const paths = runtimePaths(root, engine);
   if (await isReady(paths)) return paths.python;
   let current = installations.get(paths.directory);
   if (!current) {
