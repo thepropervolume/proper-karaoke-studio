@@ -5,6 +5,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { pipeline } = require('node:stream/promises');
+const { stripVTControlCharacters } = require('node:util');
 const yazl = require('yazl');
 const { CdgPlayer, cdgByteLimit, cdgHeight, cdgPacketBytes, cdgWidth } = require('../domain/cdg.ts');
 const { CdgEncoder, cdgExportFrameRate, cdgRgbFrameBytes } = require('../domain/cdg-encode.ts');
@@ -139,9 +140,10 @@ function saveSettings(file, value) {
 
 function runTool(executable, args, label, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, args, { cwd: options.cwd, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(executable, args, { cwd: options.cwd, env: options.env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
-    child.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-12000); });
+    const collectStderr = options.onStderr ?? (chunk => { stderr = (stderr + chunk).slice(-12000); });
+    child.stderr.setEncoding('utf8').on('data', collectStderr);
     child.once('error', error => reject(new Error('Could not start ' + label + ' (' + error.message + '). Check its executable in Preferences.')));
     child.once('close', (code, signal) => resolve({ code, signal, stderr }));
   });
@@ -423,6 +425,47 @@ async function runCloudAlignment(request, key, ffmpegPath = defaultSettings.ffmp
   } finally { await removeExportScratch(folder); }
 }
 
+function localAlignmentDiagnostics() {
+  const maximumDetail = 2400;
+  const prefix = 'Lyric alignment failed:';
+  let partialLine = '', tail = '', preferred;
+
+  function record(raw) {
+    const line = stripVTControlCharacters(raw).trim();
+    // Preserve the start of a Python diagnostic when later stderr exceeds the display limit.
+    if (line.startsWith(prefix)) {
+      preferred = { summary: true, message: line.slice(prefix.length).trim().slice(0, maximumDetail) };
+      return;
+    }
+    if (!line || line.includes('You are sending unauthenticated requests to the HF Hub') || /^\*{3,}$/.test(line)
+      || /\b\d{1,3}%\s*\|/.test(line)
+      || /\[\d+:\d\d(?:<[^,]+)?,\s*[^,\]]+(?:\/s|s\/it)\]$/.test(line)) return;
+    if (line.startsWith('LookupError:') && !preferred?.summary) {
+      preferred = { summary: false, message: line.slice(0, maximumDetail) };
+    } else if (preferred && preferred.message.length < maximumDetail) {
+      preferred.message = (preferred.message ? preferred.message + '\n' + line : line).slice(0, maximumDetail);
+    }
+    tail = (tail ? tail + '\n' + line : line).slice(-maximumDetail);
+  }
+
+  return {
+    collect(chunk) {
+      const lines = (partialLine + chunk).split(/[\r\n]+/);
+      partialLine = lines.pop().slice(0, 12000);
+      for (const line of lines) record(line);
+    },
+    failure({ code, signal }, label) {
+      if (signal === 'SIGINT' || signal === 'SIGTERM' || code === 130 || code === 0xc000013a || code === -1073741510) {
+        return new Error('Lyric synchronization canceled.');
+      }
+      record(partialLine);
+      const details = preferred?.message || tail;
+      if (preferred?.summary && preferred.message) return new Error(preferred.message);
+      return new Error(label + ' failed (' + (signal || code) + ')' + (details ? ': ' + details : '.'));
+    },
+  };
+}
+
 async function alignLyrics(input, scriptPath, prepareExecutable, engine = 'whisperx') {
   if (isCloudAlignmentEngine(engine)) throw new Error('Choose a local AI Sync engine.');
   const { audioPath, language, lyrics } = await prepareAlignmentInput(input, engine);
@@ -432,7 +475,11 @@ async function alignLyrics(input, scriptPath, prepareExecutable, engine = 'whisp
   const inputPath = path.join(tempDir, 'lyrics.json'), outputPath = path.join(tempDir, 'aligned.json');
   try {
     await fs.writeFile(inputPath, JSON.stringify({ lyrics }), 'utf8');
-    await spawnTool(executable, [scriptPath, '--engine', engine, '--audio', audioPath, '--input', inputPath, '--output', outputPath, '--language', language], alignmentEngines[engine].label + ' lyric alignment');
+    const label = alignmentEngines[engine].label + ' lyric alignment';
+    const diagnostic = localAlignmentDiagnostics();
+    const run = await runTool(executable, [scriptPath, '--engine', engine, '--audio', audioPath, '--input', inputPath, '--output', outputPath, '--language', language],
+      label, { onStderr: diagnostic.collect, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
+    if (run.code !== 0) throw diagnostic.failure(run, label);
     const result = JSON.parse(await fs.readFile(outputPath, 'utf8'));
     if (!Number.isFinite(result.duration) || !Array.isArray(result.words) || result.words.length > 10000) throw new Error('The alignment tool returned an invalid result.');
     return result;
