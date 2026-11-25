@@ -4,8 +4,8 @@ Studio aligns the lyrics you provide to your audio. Choose an **AI Sync Engine**
 
 ## Local engines
 
-- **WhisperX** is the default. It downloads the acoustic model for the selected language on first use.
-- **Qwen3 ForcedAligner** is an alternative with downloadable weights and support for 11 languages. It accepts recordings up to five minutes. Choose **Install Qwen** or start **AI Sync** to set up its private environment. The first sync downloads the model, which is approximately 1.8 GB. Studio rejects runs where many word durations collapse to near zero. Try an isolated lead vocal or another engine if that happens.
+- **WhisperX** is the default. It downloads the acoustic model for the selected language on first use. If its optional sentence tokenizer is missing or inaccessible, Studio uses the supplied transcript as a single span for alignment and retains your lyric lines. Shared NLTK data directories require no permission changes.
+- **Qwen3 ForcedAligner** is an alternative with downloadable weights and support for 11 languages. It accepts recordings up to five minutes. Choose **Install Qwen** or start **AI Sync** to set up its private environment. The first sync downloads the public model, which is approximately 1.8 GB and requires no Hugging Face token. Studio restricts timing predictions to the recording. If too many word durations collapse to near zero, try an isolated lead vocal or choose another engine.
 
 Local engines process your files on your computer. Studio installs managed CPU environments on Windows x64, Linux x64, and Apple silicon. The CLI supports `--python` for a compatible external environment. The local runtimes and model downloads live in app data, separate from your system Python.
 

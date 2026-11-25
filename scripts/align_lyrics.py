@@ -47,18 +47,48 @@ def decode_audio(source, maximum_seconds=3600):
     return np.frombuffer(pcm, dtype=np.float32)
 
 
+class SuppliedTranscriptSpan:
+    def span_tokenize(self, text):
+        return [(0, len(text))] if text else []
+
+
+def whisperx_sentence_loader(load_resource, punkt_tokenizer):
+    def load(resource):
+        match = re.fullmatch(r"tokenizers/punkt_tab/([a-z]+)\.pickle", resource)
+        if match is None:
+            return load_resource(resource)
+        try:
+            return punkt_tokenizer(match[1])
+        except (LookupError, PermissionError):
+            # WhisperX groups its timed words into sentences after alignment.
+            # Studio groups those words by the supplied lyric lines instead.
+            return SuppliedTranscriptSpan()
+
+    return load
+
+
 def align_whisperx(audio, lyrics, language, duration):
     try:
         import torch
-        import whisperx
+        from nltk.tokenize import PunktTokenizer
+        from whisperx import alignment
     except ImportError as exc:
         raise RuntimeError("WhisperX could not load in this environment. Try again with Studio’s managed lyric setup.") from exc
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # Load only WhisperX's alignment model. Never invoke its ASR/transcription path.
-    model, metadata = whisperx.load_align_model(language_code=language, device=device)
+    model, metadata = alignment.load_align_model(language_code=language, device=device)
     transcript = [{"start": 0.0, "end": duration, "text": " ".join(lyrics)}]
-    result = whisperx.align(transcript, model, metadata, audio, device, return_char_alignments=False)
+    # WhisperX 3.7.9 otherwise tries to download Punkt into a shared/default
+    # location when the tokenizer is unavailable. Only this loader is adapted.
+    load_resource = getattr(alignment, "nltk_load", None)
+    if load_resource is not None:
+        alignment.nltk_load = whisperx_sentence_loader(load_resource, PunktTokenizer)
+    try:
+        result = alignment.align(transcript, model, metadata, audio, device, return_char_alignments=False)
+    finally:
+        if load_resource is not None:
+            alignment.nltk_load = load_resource
     aligned_words = []
     for segment in result.get("segments", []):
         for word in segment.get("words", []):
@@ -160,9 +190,14 @@ def align_qwen(audio, lyrics, language, duration):
     inputs = inputs.to(model.device, model.dtype)
     with torch.inference_mode():
         outputs = model(**inputs)
+    timestamp_ms = model.config.timestamp_segment_time
+    # The head scores classes beyond the clip. Keep the final rounding bucket
+    # so the existing duration clamp can handle a partial 80 ms interval.
+    class_count = math.ceil(len(audio) * 1000 / (SAMPLE_RATE * timestamp_ms)) + 1
     decoded = processor.decode_forced_alignment(
-        logits=outputs.logits, input_ids=inputs["input_ids"], word_lists=words,
+        logits=outputs.logits[..., :class_count], input_ids=inputs["input_ids"], word_lists=words,
         timestamp_token_id=model.config.timestamp_token_id,
+        timestamp_segment_time=timestamp_ms,
     )[0]
     return restore_qwen_words(" ".join(lyrics).split(), decoded, duration)
 
