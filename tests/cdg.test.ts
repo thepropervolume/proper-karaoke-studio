@@ -82,3 +82,63 @@ test('authored graphics round trip as black, magenta, and white frames', () => {
   player.seek(0.11);
   assert.deepEqual(pixel(player, 6, 12), black);
 });
+
+const magenta = [221, 34, 170, 255], white = [255, 255, 255, 255];
+function mark(raster: Uint8Array, x: number, y: number, highlight = false) {
+  raster.set(highlight ? [255, 0, 255] : [255, 255, 255], (y * cdgWidth + x) * 3);
+}
+
+test('lower lyric rows finish drawing while a wide first row keeps changing', () => {
+  const encoder = new CdgEncoder(0.64);
+  const raster = new Uint8Array(cdgRgbFrameBytes);
+  for (let frame = 0; frame < 16; frame++) {
+    for (const y of [24, 60, 96, 132]) {
+      for (let x = 6; x <= 144; x += 6) mark(raster, x, y, y === 24 && frame % 2 === 0);
+    }
+    encoder.pushFrame(raster);
+  }
+  const player = new CdgPlayer(encoder.finish());
+  assert.equal(player.durationSeconds, 0.64);
+  player.seek(0.639);
+  for (const y of [60, 96, 132]) {
+    for (const x of [6, 72, 144]) assert.deepEqual(pixel(player, x, y), white);
+  }
+});
+
+test('a highlight switches with one packet ahead of a fresh row update', () => {
+  const encoder = new CdgEncoder(0.08);
+  const raster = new Uint8Array(cdgRgbFrameBytes);
+  mark(raster, 144, 132);
+  encoder.pushFrame(raster);
+  for (let x = 6; x <= 144; x += 6) mark(raster, x, 24);
+  mark(raster, 144, 132, true);
+  encoder.pushFrame(raster);
+
+  const bytes = encoder.finish();
+  const highlight = 12 * cdgPacketBytes;
+  assert.deepEqual([...bytes.slice(highlight + 1, highlight + 8)], [38, 0, 0, 0, 3, 11, 24]);
+  const player = new CdgPlayer(bytes);
+  player.seek(0.041);
+  assert.deepEqual(pixel(player, 144, 132), magenta);
+  assert.deepEqual(pixel(player, 145, 132), black);
+  assert.deepEqual(pixel(player, 6, 24), black);
+});
+
+test('a tile with both ink colors waits until both drawing packets fit', () => {
+  const encoder = new CdgEncoder(0.08);
+  const raster = new Uint8Array(cdgRgbFrameBytes);
+  for (let x = 6; x <= 54; x += 6) mark(raster, x, 12);
+  mark(raster, 60, 12);
+  mark(raster, 61, 12, true);
+  encoder.pushFrame(raster);
+  encoder.pushFrame(raster);
+
+  const player = new CdgPlayer(encoder.finish());
+  player.seek(0.039);
+  assert.deepEqual(pixel(player, 60, 12), black);
+  assert.deepEqual(pixel(player, 61, 12), black);
+  player.seek(0.05);
+  assert.deepEqual(pixel(player, 60, 12), white);
+  assert.deepEqual(pixel(player, 61, 12), magenta);
+  assert.deepEqual(pixel(player, 62, 12), black);
+});

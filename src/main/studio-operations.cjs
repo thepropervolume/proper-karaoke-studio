@@ -236,16 +236,20 @@ async function stageLyricFonts(directory, customFontPath) {
   throw new Error('Studio’s lyric fonts could not be found. Repair the Studio installation and try again.');
 }
 
-async function rasterizeCdg(ass, duration, ffmpeg, color, customFontPath) {
+async function rasterizeCdg(ass, duration, ffmpeg, customFontPath) {
   const encoder = new CdgEncoder(duration);
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tpv-studio-cdg-'));
   try {
     await fs.writeFile(path.join(directory, 'lyrics.ass'), text(ass, 'subtitle data', 8 * 1024 * 1024), 'utf8');
     await stageLyricFonts(directory, customFontPath);
     const executable = /[\\/]/.test(ffmpeg) ? path.resolve(ffmpeg) : ffmpeg;
+    // Render at twice the CD+G resolution and average back down for a more even
+    // glyph mask. Keep the subtitle markers in RGB so changing hue preserves coverage.
+    const raster = `color=c=black:s=${cdgWidth * 2}x${cdgHeight * 2}:r=${cdgExportFrameRate}:d=${duration},format=rgb24`;
+    const subtitles = `subtitles=filename=lyrics.ass:fontsdir=fonts,scale=${cdgWidth}:${cdgHeight}:flags=area`;
     const child = spawn(executable, [
-      '-v', 'error', '-nostdin', '-f', 'lavfi', '-i', 'color=c=' + exportBackground(color, 'black') + ':s=' + cdgWidth + 'x' + cdgHeight + ':r=' + cdgExportFrameRate + ':d=' + duration,
-      '-vf', 'subtitles=filename=lyrics.ass:fontsdir=fonts', '-pix_fmt', 'rgb24', '-threads', '1', '-f', 'rawvideo', 'pipe:1',
+      '-v', 'error', '-nostdin', '-f', 'lavfi', '-i', raster,
+      '-vf', subtitles, '-pix_fmt', 'rgb24', '-threads', '1', '-f', 'rawvideo', 'pipe:1',
     ], { cwd: directory, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '', startupError;
     child.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-2400); });
@@ -281,7 +285,7 @@ async function rasterizeCdg(ass, duration, ffmpeg, color, customFontPath) {
 
 async function exportCdg(input, destination, overwrite = true) {
   const bytes = input.cdgPath ? await readCdg(input.cdgPath)
-    : await rasterizeCdg(input.ass, input.duration, text(input.ffmpegPath, 'FFmpeg executable', 4096).trim() || 'ffmpeg', input.backgroundColor, input.customFontPath);
+    : await rasterizeCdg(input.ass, input.duration, text(input.ffmpegPath, 'FFmpeg executable', 4096).trim() || 'ffmpeg', input.customFontPath);
   return writeOutput(destination, overwrite, file => fs.writeFile(file, bytes));
 }
 

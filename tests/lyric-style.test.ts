@@ -49,11 +49,34 @@ test('four lyric rows roll independently and long breaks show a countdown', () =
   assert.equal(replacement.page.lines[0].box.y, leaving.page.lines[0].box.y);
   assert.equal(karaFunLyricFrame(timing, 21).pages.length, 0);
   assert.deepEqual(timing.bars.map(({ start, end }) => [start, end]), [[0, 32], [0, 6.75], [17.68, 26.75]]);
-  for (const target of ['video', 'cdg'] as const) {
-    const ass = toAss('Song', 'Artist', 32, lines, target, style);
-    assert.match(ass, /Dialogue: 0,0:00:06\.75,0:00:10\.93,.+\\fad\(180,180\).+\\kt125\\kf150\}Line 0/);
-    assert.match(ass, /\\t\(0,9070,\\clip/);
-  }
+  const ass = toAss('Song', 'Artist', 32, lines, 'video', style);
+  assert.match(ass, /Dialogue: 0,0:00:06\.75,0:00:10\.93,.+\\fad\(180,180\).+\\kt125\\kf150\}Line 0/);
+  assert.match(ass, /\\t\(0,9070,\\clip/);
+});
+
+test('CD+G uses larger contrast-first typography and fits wide rows without altering word times', () => {
+  const lines = ['First line', 'WWW MMM WWW MMM WWW MMM', 'A Title', 'Hello'].map((text, index) =>
+    line(String(index), text, 8 + index * 2, 9.5 + index * 2));
+  const style = {
+    ...defaultLyricStyle, allCaps: true, highlightColor: '#00ff00',
+    progressBar: { ...defaultLyricStyle.progressBar, enabled: true },
+    countdownBar: { ...defaultLyricStyle.countdownBar, enabled: true },
+  };
+  const { entries, bars, width, height, side } = layoutLyrics(lines, 24, style, 'cdg');
+  assert.deepEqual([width, height], [300, 216]);
+  assert(entries[0].fontSize >= 22);
+  assert(entries[1].fontSize < entries[0].fontSize);
+  assert(side > 6);
+  assert(entries.every(({ centerY, fontSize }) => centerY - fontSize / 2 >= 12 && centerY + fontSize / 2 <= 204));
+  assert(entries.every(({ fadeIn, fadeOut }) => fadeIn === 0 && fadeOut === 0));
+  assert.deepEqual(entries.flatMap(({ words }) => words.map(({ startSeconds, endSeconds }) => [startSeconds, endSeconds])),
+    lines.map(({ startSeconds, endSeconds }) => [startSeconds, endSeconds]));
+  assert.deepEqual(bars, []);
+  const ass = toAss('Song', 'Artist', 24, lines, 'cdg', style);
+  assert.match(ass, /PlayResX: 300\nPlayResY: 216/);
+  assert.match(ass, /Liberation Sans,64,&H00ff00ff,&H00ffffff,&H00000000,&H00000000,-1/);
+  assert.match(ass, /Dialogue: 0,0:00:06\.75,0:00:10\.75,.+\\fs24\\bord0\}.+\\kt125\\kf150\}FIRST LINE/);
+  assert.doesNotMatch(ass, /\\fad\b|\\clip\b/);
 });
 
 test('overlapping cues make room for their replacements and finish fading by the end of the track', () => {

@@ -990,7 +990,7 @@ export function App() {
       const exportDuration = duration || lines.reduce((end, line) => Math.max(end, line.endSeconds), 0);
       const saved = await window.studio.exportCdg(original && cdgPath ? { name, cdgPath }
         : { name, duration: exportDuration, ass: toAss(title, artist, exportDuration, lines, 'cdg', lyricStyle),
-          backgroundColor: lyricStyle.backgroundColor, customFontPath, ffmpegPath: settings.ffmpegPath });
+          customFontPath, ffmpegPath: settings.ffmpegPath });
       if (saved) setStatus('Exported CD+G graphics: ' + basename(saved) + '.');
     } catch (cause) { setError(preferenceError(cause)); }
     finally { setBusy(false); }

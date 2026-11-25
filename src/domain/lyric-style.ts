@@ -89,6 +89,23 @@ export function portableLyricFontPath(source: string) {
 export const lyricFrames = { video: { width: 1920, height: 1080 }, cdg: { width: 300, height: 216 } } as const;
 export type LyricBar = { start: number; end: number; x: number; y: number; width: number; height: number; border: number; style: LyricBarStyle };
 
+// Bundled Liberation Bold ASCII advances rounded up to tenths of an em.
+const cdgAsciiWidths = {
+  sans: [" ',./\\Iijl|", '!()*-:;[]\x60frt{}', '"z', '#$+0123456789<=>J^_aceksvxy~', '?EFLPSTVXYZbdghnopqu', '&ABCDGHKNOQRUw', '%Mm', '@W'],
+  serif: [" ',./\\il|", '!()-:;I[]\x60fjst{}', '#$*0123456789?J_acegorvxyz', '"+<=>S^bdhknpqu~', 'BEFLPTZ', 'ACDGHKNOQRUVXYw', '&m', '%@MW'],
+};
+
+function cdgTextWidth(text: string, font: LyricStyle['font']) {
+  return [...text.normalize('NFD')].reduce((total, char) => {
+    if (/\p{Mark}/u.test(char)) return total;
+    if (/\s/u.test(char)) char = ' ';
+    if (font === 'custom' || !/^[ -~]$/.test(char)) return total + 1.2;
+    if (font === 'mono') return total + .61;
+    const group = cdgAsciiWidths[font].findIndex(chars => chars.includes(char));
+    return total + (group < 0 ? 1 : (group + 3) / 10);
+  }, 0);
+}
+
 export function timedBar(style: LyricBarStyle, width: number, height: number, start: number, end: number): LyricBar {
   const w = Math.max(2, Math.round(width * style.width / 100)), h = Math.max(2, Math.round(height * style.height / 100));
   const x = Math.min(width - w, Math.max(0, Math.round(width * style.x / 100 - w / 2)));
@@ -100,7 +117,8 @@ export function timedBar(style: LyricBarStyle, width: number, height: number, st
 export function layoutLyrics(lines: readonly LyricLine[], duration: number, input?: Partial<LyricStyle>, target: 'video' | 'cdg' = 'video') {
   const style = normalizeLyricStyle(input);
   const { width, height } = lyricFrames[target];
-  const side = Math.round(width * 0.065);
+  const cdg = target === 'cdg';
+  const side = cdg ? 14 : Math.round(width * 0.065);
   const rows = style.linesPerScreen;
   const endOfVideo = Number.isFinite(duration) && duration > 0 ? duration
     : lines.reduce((last, line) => Number.isFinite(line.endSeconds) ? Math.max(last, line.endSeconds) : last, 1);
@@ -125,18 +143,20 @@ export function layoutLyrics(lines: readonly LyricLine[], duration: number, inpu
   if (phrase.length) phrases.push(phrase);
   const entries = [];
   const bars: LyricBar[] = [];
-  if (style.progressBar.enabled) bars.push(timedBar(style.progressBar, width, height, 0, endOfVideo));
+  if (!cdg && style.progressBar.enabled) bars.push(timedBar(style.progressBar, width, height, 0, endOfVideo));
   let lastPhraseEnd = 0;
   let lastVisibleEnd = 0;
-  const transition = .18;
-  const fontHeight = style.fontSize * height / 1080;
+  // A CD+G packet stream has far fewer updates available than an MP4 frame.
+  // Give the text the full contrast and packet budget as soon as its row appears.
+  const transition = cdg ? 0 : .18;
+  const fontHeight = style.fontSize * height / (cdg ? 760 : 1080);
   for (const group of phrases) {
     const phraseStart = Math.max(lastPhraseEnd, group[0].start - 1.25);
     const slotCount = Math.min(rows, group.length);
-    const rowHeight = Math.min(Math.round(fontHeight * style.leading / 100), Math.floor(height * .90 / slotCount));
+    const rowHeight = Math.min(Math.round(fontHeight * style.leading / 100), Math.floor((cdg ? height - 36 : height * .90) / slotCount));
     const slotEnds: number[] = [];
     const countdownStart = Math.max(lastPhraseEnd, lastVisibleEnd);
-    if (style.countdownBar.enabled && group[0].start - lastPhraseEnd >= style.countdownBar.minimumBreak && phraseStart > countdownStart) {
+    if (!cdg && style.countdownBar.enabled && group[0].start - lastPhraseEnd >= style.countdownBar.minimumBreak && phraseStart > countdownStart) {
       bars.push(timedBar(style.countdownBar, width, height, countdownStart, phraseStart));
     }
     // Keep each on-screen line in its row. A completed row is reused for the
@@ -164,10 +184,11 @@ export function layoutLyrics(lines: readonly LyricLine[], duration: number, inpu
         wordCursor = Math.min(highlightEnd, Math.max(startSeconds, word.endSeconds));
         return { text: style.allCaps ? word.text.toUpperCase() : word.text, startSeconds, endSeconds: wordCursor };
       });
-      // Leave the same room for wide glyphs in both renderers.
-      const ems = [...words.map(word => word.text).join('')].reduce((total, char) =>
+      const text = words.map(word => word.text).join('');
+      const ems = cdg ? cdgTextWidth(text, style.font) : [...text].reduce((total, char) =>
         total + (/\p{Mark}/u.test(char) ? 0 : /[^\u0000-\u024f]/u.test(char) ? 1.08 : /[MW@%]/.test(char) ? .95 : .68), 0);
-      const fontSize = Math.max(1, Math.round(Math.min(fontHeight, rowHeight * .94, (width - side * 2) / Math.max(1, ems))));
+      const fit = Math.min(fontHeight, rowHeight * .94, (width - side * 2) / Math.max(1, ems));
+      const fontSize = Math.max(1, cdg ? Math.floor(fit) : Math.round(fit));
       entries.push({ showAt, hideAt, fadeIn, fadeOut, words, centerY: height / 2 + (row - (slotCount - 1) / 2) * rowHeight, fontSize });
     }
     lastPhraseEnd = group.reduce((latest, cue) => Math.max(latest, cue.end), lastPhraseEnd);

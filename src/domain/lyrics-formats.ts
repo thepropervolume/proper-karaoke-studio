@@ -85,22 +85,27 @@ type AssVideoTiming = { offset: number; openingCountdown: LyricBar | null };
 export function toAss(title: string, artist: string, duration: number, lines: readonly LyricLine[], target: 'video' | 'cdg' = 'video',
   appearance?: LyricStyle, presentation?: AssVideoTiming): string {
   const { width, height, style, entries, bars } = layoutLyrics(lines, duration, appearance, target);
+  const cdg = target === 'cdg';
   const resolution = 'PlayResX: ' + width + '\nPlayResY: ' + height + '\nScaledBorderAndShadow: yes\nWrapStyle: 2';
   // libass uses the secondary color before a karaoke syllable's time.
-  const palette = [style.highlightColor, style.textColor, style.outlineColor, style.backgroundColor].map(assColor).join(',');
+  // These CD+G raster colors identify the two lyric states for the packet encoder.
+  const palette = (cdg ? ['#ff00ff', '#ffffff', '#000000', '#000000']
+    : [style.highlightColor, style.textColor, style.outlineColor, style.backgroundColor]).map(assColor).join(',');
   const styleLine = 'Style: Default,' + lyricFontFamily(style) + ',64,' + palette
-    + ',' + (style.font === 'custom' ? 0 : -1) + ',0,1,3,0,5,0,0,0,1\n\n';
+    + ',' + (style.font === 'custom' && !cdg ? 0 : -1) + ',0,1,3,0,5,0,0,0,1\n\n';
   const header = '[Script Info]\nTitle: ' + escapeAss(title) + ' - ' + escapeAss(artist) + '\nScriptType: v4.00+\n' + resolution + '\n\n' +
     assStyles + styleLine + assEvents;
   const offset = presentation?.offset ?? 0;
   const events = entries.map(({ showAt, hideAt, fadeIn, fadeOut, words, centerY, fontSize }) => {
-    const position = '{\\an5\\pos(' + width / 2 + ',' + centerY + ')\\fs' + fontSize + '\\bord' + Math.max(.5, fontSize * .0425).toFixed(2) + '}';
+    const border = cdg ? 0 : Math.max(.5, fontSize * .0425).toFixed(2);
+    const position = '{\\an5\\pos(' + width / 2 + ',' + centerY + ')\\fs' + fontSize + '\\bord' + border + '}';
     const lyrics = words.map(word => {
       const delay = Math.max(0, Math.round((word.startSeconds - showAt) * 100));
       const span = Math.max(1, Math.round((word.endSeconds - word.startSeconds) * 100));
       return '{\\kt' + delay + '\\kf' + span + '}' + escapeAss(word.text);
     }).join('');
-    return assDialogue(0, showAt + offset, hideAt + offset, position + '{\\fad(' + Math.round(fadeIn * 1000) + ',' + Math.round(fadeOut * 1000) + ')}' + lyrics);
+    const fade = cdg ? '' : '{\\fad(' + Math.round(fadeIn * 1000) + ',' + Math.round(fadeOut * 1000) + ')}';
+    return assDialogue(0, showAt + offset, hideAt + offset, position + fade + lyrics);
   });
   const rectangle = (left: number, top: number, right: number, bottom: number, color: string, motion = '') =>
     '{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H' + bgr(color) + '&' + motion + '\\p1}m '

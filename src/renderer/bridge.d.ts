@@ -100,7 +100,7 @@ declare global {
     addLyricFont(): Promise<CustomLyricFont | null>;
     registerLyricFont(filePath: string): Promise<CustomLyricFont & { url: string }>;
     readCdg(filePath: string): Promise<Uint8Array>;
-    exportCdg(input: { name: string; cdgPath: string } | { name: string; ass: string; duration: number; ffmpegPath: string; backgroundColor?: string; customFontPath?: string }): Promise<string | null>;
+    exportCdg(input: { name: string; cdgPath: string } | { name: string; ass: string; duration: number; ffmpegPath: string; customFontPath?: string }): Promise<string | null>;
     chooseAudioFiles(): Promise<string[]>; chooseImageFile(): Promise<string | null>;
     armVoiceRecording(): Promise<void>;
     disarmVoiceRecording(): Promise<void>;
