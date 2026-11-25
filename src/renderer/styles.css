@@ -328,6 +328,8 @@ a { color: var(--accent); }
 .timing-tools .toolbar { gap: 6px; }
 .timing-tools .toolbar button { font-size: 12px; padding-inline: 8px; }
 .cue-sheet { min-width: 0; }
+.shift-timings input { width: 88px; }
+.cue-block > input[type="checkbox"] { justify-self: center; accent-color: var(--accent); }
 .cue-columns, .cue-block { display: grid; grid-template-columns: 31px minmax(0, 1fr) 110px; gap: 6px; align-items: center; }
 .cue-columns { padding: 0 6px 5px; font-size: 11px; font-weight: 700; }
 .cue-block { padding: 7px 5px; border-top: 1px solid var(--line); }

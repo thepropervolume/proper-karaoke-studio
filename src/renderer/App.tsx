@@ -5,6 +5,7 @@ import { newLyricLines, toPortableKitProject, toRenderTiming, type LyricLine, ty
 import { completeTimingSession, completedDraftWords, normalizeWordTimingDrafts, recordTimingTap, splitLineWords, startTimingSession,
   stepTimingHistory, timingPosition, type CaptureMode, type TimingField, type TimingSession, type WordTimingDrafts } from '../domain/manual-timing';
 import { editLyricTimingText, lyricTimingInput, lyricTimingTokens } from '../domain/lyric-timing-text';
+import { shiftLyricTimings } from '../domain/shift-lyrics';
 import { parseLyricsFile, toAss, toLrc, toLyricsJson, toSrt } from '../domain/lyrics-formats';
 import { formatLyricText, MAXIMUM_LYRIC_TEXT_BYTES, readLyricVersions, type LyricFormatOptions, type LyricVersion } from '../domain/lyric-format';
 import { applyForcedAlignment } from '../domain/forced-alignment';
@@ -132,6 +133,12 @@ export function App() {
   const timingTarget = timingSession?.targets[timingSession.cursor];
   const [wordTimingDrafts, setWordTimingDrafts] = useState<WordTimingDrafts>({});
   const [selectedCueId, setSelectedCueId] = useState<string>();
+  const [shiftOpen, setShiftOpen] = useState(false);
+  const [shiftAmount, setShiftAmount] = useState(0.25);
+  const [shiftScope, setShiftScope] = useState<'all' | 'line' | 'selection'>('line');
+  const [shiftSelection, setShiftSelection] = useState(new Set<string>());
+  const shiftAnchor = useRef<string | undefined>(undefined);
+  const [undoShift, setUndoShift] = useState<{ before: LyricLine[]; drafts: WordTimingDrafts; after: LyricLine[]; afterDrafts: WordTimingDrafts }>();
   const [expandedWordCues, setExpandedWordCues] = useState<Set<string>>(() => new Set());
   const [timelineCue, setTimelineCue] = useState<{ id: string }>();
   const inspectorRef = useRef<HTMLElement>(null);
@@ -323,6 +330,9 @@ export function App() {
     setLines(project.lyrics);
     setWordTimingDrafts(project.wordTimingDrafts ?? {});
     setSelectedCueId(undefined);
+    setShiftSelection(new Set());
+    shiftAnchor.current = undefined;
+    setUndoShift(undefined);
     setExpandedWordCues(new Set());
     setTimelineCue(undefined);
     setLyricFormatOverride(null);
@@ -455,17 +465,18 @@ export function App() {
     setPosition(time);
   };
   const skip = (delta: number) => seek((livePosition() ?? position) + delta);
-  const moveCue = (id: string, start: number) => setLines(current => current.map(line => {
-    if (line.id !== id) return line;
-    const earliest = Math.min(line.startSeconds, ...line.words.map(word => word.startSeconds));
-    const latest = Math.max(line.endSeconds, ...line.words.map(word => word.endSeconds));
-    const delta = Math.max(-earliest, Math.min(start - line.startSeconds, duration - latest));
-    const shift = (time: number) => Math.max(0, Math.round((time + delta) * 1000) / 1000);
-    return {
-      ...line, startSeconds: shift(line.startSeconds), endSeconds: shift(line.endSeconds),
-      words: line.words.map(word => ({ ...word, startSeconds: shift(word.startSeconds), endSeconds: shift(word.endSeconds) })),
-    };
-  }));
+  function shiftCues(ids: ReadonlySet<string>, delta: number, limit?: number) {
+    const result = shiftLyricTimings(lines, wordTimingDrafts, ids, delta, limit);
+    if (!result.delta) { setStatus('The selected cues are already at the timing limit.'); return; }
+    setUndoShift({ before: lines, drafts: wordTimingDrafts, after: result.lines, afterDrafts: result.drafts });
+    setLines(result.lines);
+    setWordTimingDrafts(result.drafts);
+    setStatus(`Shifted ${ids.size === 1 ? 'one cue' : ids.size + ' cues'} ${Math.round(Math.abs(result.delta) * 1000) / 1000} s ${result.delta < 0 ? 'earlier' : 'later'}.`);
+  }
+  const moveCue = (id: string, start: number) => {
+    const cue = lines.find(line => line.id === id);
+    if (cue) shiftCues(new Set([id]), start - cue.startSeconds, duration || undefined);
+  };
   const setMasterVolume = (value: number) => { setVolume(value); if (generation.current) player.current?.setVolume(generation.current, value); };
 
   const lyricInputs = useMemo(() => lines.map(lyricTimingInput), [lines]);
@@ -984,6 +995,21 @@ export function App() {
   const canStartTiming = Boolean(lines.length && player.current?.snapshot()?.ready && !busy && !timing);
   const activeCue = lines.findIndex(line => position >= line.startSeconds && position < line.endSeconds);
   const selectedCue = lines.find(line => line.id === selectedCueId) ?? lines[activeCue];
+  const shiftIds = new Set(lines.filter(line => shiftScope === 'all' || (shiftScope === 'line'
+    ? line.id === selectedCue?.id : shiftSelection.has(line.id))).map(line => line.id));
+  function selectShiftCue(id: string, extend: boolean) {
+    const anchor = lines.findIndex(line => line.id === shiftAnchor.current);
+    const clicked = lines.findIndex(line => line.id === id);
+    setShiftSelection(current => {
+      const next = new Set(current);
+      if (extend && anchor >= 0) {
+        for (const line of lines.slice(Math.min(anchor, clicked), Math.max(anchor, clicked) + 1)) next.add(line.id);
+      } else if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    if (!extend || anchor < 0) shiftAnchor.current = id;
+  }
   const splitSelectedCue = () => { if (selectedCue) splitCue(selectedCue.id); };
   const projectTitle = title.trim() || 'Untitled Project';
   const fileName = openedProject ? basename(openedProject.file) : undefined;
@@ -1178,7 +1204,29 @@ export function App() {
                 onClick={() => void alignLyrics()}>AI Sync</button>
               <button type="button" data-tip={shortcutHint('Play from the current position and tap each line as it begins.', 'time-lines')} disabled={!canStartTiming} onClick={() => void beginTiming('line')}>Time Lines</button>
               <button type="button" data-tip={shortcutHint('Play from the current position and tap each word as it begins.', 'time-words')} disabled={!canStartTiming} onClick={() => void beginTiming('word')}>Time Words</button>
+              <button type="button" aria-expanded={shiftOpen} aria-controls="shift-timings" disabled={!lines.length || busy || timing} onClick={() => setShiftOpen(value => !value)}>Shift Timings…</button>
             </div>
+            {shiftOpen && <div className="stack shift-timings" id="shift-timings">
+              <div className="row">
+                <label className="field-label grow">Cues
+                  <select value={shiftScope} onChange={event => setShiftScope(event.target.value as typeof shiftScope)}>
+                    <option value="line">Current line</option><option value="selection">Selected cues</option><option value="all">Entire song</option>
+                  </select>
+                </label>
+                <label className="field-label">Seconds
+                  <input type="number" min="0.001" max="3600" step="0.001" value={Number.isFinite(shiftAmount) ? shiftAmount : ''}
+                    onChange={event => setShiftAmount(event.target.valueAsNumber)} />
+                </label>
+              </div>
+              {shiftScope === 'selection' && <small className="muted">Select cue checkboxes. Shift-click to select a range.</small>}
+              <div className="toolbar">
+                <button type="button" disabled={busy || timing || !shiftIds.size || !(shiftAmount > 0 && shiftAmount <= 3600)} onClick={() => shiftCues(shiftIds, -shiftAmount)}>Earlier</button>
+                <button type="button" disabled={busy || timing || !shiftIds.size || !(shiftAmount > 0 && shiftAmount <= 3600)} onClick={() => shiftCues(shiftIds, shiftAmount)}>Later</button>
+                {undoShift?.after === lines && undoShift.afterDrafts === wordTimingDrafts && <button type="button" disabled={busy || timing} onClick={() => {
+                  setLines(undoShift.before); setWordTimingDrafts(undoShift.drafts); setUndoShift(undefined); setStatus('Restored lyric timings.');
+                }}>Undo Shift</button>}
+              </div>
+            </div>}
             <small className="muted">AI Sync engine · {aligner.label}</small>
           </div>
           {lines.length > 0 ? <div className="cue-sheet">
@@ -1200,9 +1248,12 @@ export function App() {
                   void window.studio.timingContextMenu('line').then(action => { if (action === 'split-words') split(); })
                     .catch(cause => setError(preferenceError(cause)));
                 }}>
-                <button type="button" className="cue-number" disabled={busy || timing} onClick={() => seek(line.startSeconds)} aria-label={'Seek to cue ' + (index + 1)}>
-                  {String(index + 1).padStart(2, '0')}
-                </button>
+                {shiftOpen && shiftScope === 'selection'
+                  ? <input type="checkbox" aria-label={'Select cue ' + (index + 1)} checked={shiftSelection.has(line.id)}
+                    disabled={busy || timing} onChange={() => {}} onClick={event => selectShiftCue(line.id, event.shiftKey)} />
+                  : <button type="button" className="cue-number" disabled={busy || timing} onClick={() => seek(line.startSeconds)} aria-label={'Seek to cue ' + (index + 1)}>
+                    {String(index + 1).padStart(2, '0')}
+                  </button>}
                 <input className="cue-text" aria-label={'Lyric line ' + (index + 1)} value={lyricInputs[index]} disabled={busy || timing}
                   data-tip={'Use / to split a word into timing cues. Type \\/ for a visible slash.'}
                   onChange={event => updateCueText(line, event.target.value)} />
