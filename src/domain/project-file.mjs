@@ -4,6 +4,7 @@ import { basename, dirname, resolve } from 'node:path';
 import { normalizeLyricStyle } from './lyric-style.ts';
 import { normalizeWordTimingDrafts } from './manual-timing.ts';
 import { savedLyricTimingText } from './lyric-timing-text.ts';
+import { normalizeVideoPresentation } from './video-presentation.ts';
 
 export const projectSchema = 'com.thepropervolume.karaoke-studio';
 export const stemRoles = ['instrumental', 'lead', 'backing', 'other'];
@@ -94,6 +95,11 @@ export function validateProject(input, projectPath) {
   const wordTimingDrafts = normalizeWordTimingDrafts(value.wordTimingDrafts, lyrics);
   const lyricStyle = normalizeLyricStyle(value.lyricStyle);
   if (lyricStyle.customFont) lyricStyle.customFont.path = mediaPath(lyricStyle.customFont.path, 'Lyric font');
+  const videoPresentation = normalizeVideoPresentation(value.videoPresentation);
+  for (const kind of ['logo', 'openingAnimation', 'closingAnimation']) {
+    const asset = videoPresentation[kind];
+    if (asset.path) asset.path = mediaPath(asset.path, 'Presentation media');
+  }
   return {
     schema: projectSchema,
     version: 1,
@@ -106,6 +112,7 @@ export function validateProject(input, projectPath) {
     backgroundPath: value.backgroundPath == null ? null : mediaPath(value.backgroundPath, 'Backdrop'),
     backgroundLoop: value.backgroundLoop !== false,
     lyricStyle,
+    videoPresentation,
     ...(Object.keys(wordTimingDrafts).length ? { wordTimingDrafts } : {}),
   };
 }

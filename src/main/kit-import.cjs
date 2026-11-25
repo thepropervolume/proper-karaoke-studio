@@ -9,6 +9,7 @@ const yauzl = require('yauzl');
 const { saveProject, validateProject } = require('../domain/project-file.mjs');
 const { AUDIO_EXTENSIONS, BACKGROUND_EXTENSIONS, localFile } = require('./studio-operations.cjs');
 const { FONT_EXTENSIONS, describeLyricFont, fontLimit } = require('./lyric-fonts.cjs');
+const { VIDEO_ANIMATION_EXTENSIONS, VIDEO_LOGO_EXTENSIONS } = require('../domain/video-presentation.ts');
 
 const MIB = 1024 * 1024;
 const entryLimit = 128;
@@ -105,7 +106,15 @@ function buildAssetPlan(entries, data) {
   const storedFont = data.lyricStyle?.customFont?.path;
   const font = storedFont == null ? null : add(storedFont, 'fonts', 'lyric-font', FONT_EXTENSIONS);
   if (font && plan.at(-1).entry.uncompressedSize > fontLimit) throw new Error('The kit contains an oversized lyric font.');
-  return { plan, stems, cdg, background, font };
+  const presentationAssets = {};
+  for (const [kind, name, extensions] of [
+    ['logo', 'logo', VIDEO_LOGO_EXTENSIONS], ['openingAnimation', 'opening', VIDEO_ANIMATION_EXTENSIONS],
+    ['closingAnimation', 'closing', VIDEO_ANIMATION_EXTENSIONS],
+  ]) {
+    const reference = data.videoPresentation?.[kind]?.path;
+    presentationAssets[kind] = reference == null ? null : add(reference, 'presentation', name, new Set(extensions));
+  }
+  return { plan, stems, cdg, background, font, presentationAssets };
 }
 
 /** Reopen a portable kit into a new project and a sibling directory of its local media. */
@@ -124,7 +133,7 @@ async function importKit(kitPath, destination) {
     if (zip.entryCount > entryLimit) throw new Error('The kit contains too many archive entries.');
     const entries = await indexEntries(zip);
     const { data, project } = await readManifest(zip, entries.get('manifest.json'), file);
-    const { plan, stems, cdg, background, font } = buildAssetPlan(entries, data);
+    const { plan, stems, cdg, background, font, presentationAssets } = buildAssetPlan(entries, data);
     if (plan.length) {
       const prefix = path.basename(file).replace(/(?:\.tpv)?\.json$/i, '').slice(0, 50) || 'Studio';
       mediaDirectory = await mkdtemp(path.join(path.dirname(file), prefix + '.media-'));
@@ -136,12 +145,17 @@ async function importKit(kitPath, destination) {
     }
     const assetPath = name => name === null ? null : path.join(mediaDirectory, name);
     const lyricStyle = font ? { ...project.lyricStyle, customFont: await describeLyricFont(assetPath(font)) } : project.lyricStyle;
+    const videoPresentation = { ...project.videoPresentation };
+    for (const [kind, filename] of Object.entries(presentationAssets)) {
+      videoPresentation[kind] = { ...videoPresentation[kind], path: assetPath(filename) };
+    }
     const saved = await saveProject(file, {
       ...project,
       stems: project.stems.map((stem, index) => ({ ...stem, path: assetPath(stems[index]) })),
       importedCdg: assetPath(cdg),
       backgroundPath: assetPath(background),
       lyricStyle,
+      videoPresentation,
     }, { createOnly: true });
     return { file, project: saved, mediaDirectory };
   } catch (error) {

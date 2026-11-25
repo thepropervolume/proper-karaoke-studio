@@ -44,6 +44,8 @@ Reopen a portable kit into a new editable project. Studio extracts its media int
 
     tpv-karaoke-studio project import-kit "Song.tpvkit" --project "Restored Song.tpv.json"
 
+Save the logo, title cards, and opening and closing animations in Studio before running `export video`. The CLI uses that project's presentation settings. A TPV kit includes the logo and animation files alongside the stems and other project media.
+
 Stem and line selectors accept IDs or one-based indexes. Word selectors use one-based indexes within a line. Numeric times are in seconds and manual cue inputs also accept `mm:ss.mmm`. FFmpeg measures imported audio unless you give `--duration`. Stem separation can optionally add its results to the project with `--add`. See the [lyric alignment guide](lyric-synchronization.md) and [stem separation guide](audio-separation.md) for their local runtime requirements.
 
 In plain-text lyrics and `lyrics line --text`, use `per/fect` to create two independently timed parts of `perfect`. Use `\/` for a visible slash. `lyrics word` addresses each timed part by its one-based index.

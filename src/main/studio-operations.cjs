@@ -10,6 +10,9 @@ const yazl = require('yazl');
 const { CdgPlayer, cdgByteLimit, cdgHeight, cdgPacketBytes, cdgWidth } = require('../domain/cdg.ts');
 const { CdgEncoder, cdgExportFrameRate, cdgRgbFrameBytes } = require('../domain/cdg-encode.ts');
 const { portableBackgroundPath } = require('../domain/project.ts');
+const { toAss, toTitleAss } = require('../domain/lyrics-formats.ts');
+const { normalizeVideoPresentation, portableVideoPath, VIDEO_ANIMATION_EXTENSIONS, VIDEO_LOGO_EXTENSIONS, videoCountdownBar, videoPresentationAssets } = require('../domain/video-presentation.ts');
+const { appendVideoPresentation, readVideoPresentation, decimal } = require('./video-export.cjs');
 const { portableLyricFontPath } = require('../domain/lyric-style.ts');
 const { describeLyricFont } = require('./lyric-fonts.cjs');
 const { separatorModels } = require('../domain/studio-options.json');
@@ -23,6 +26,8 @@ const { DEFAULT_LYRIC_FORMAT_OPTIONS, normalizeLyricFormatOptions, validateLyric
 const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.aiff', '.wma']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 const BACKGROUND_EXTENSIONS = new Set([...IMAGE_EXTENSIONS, '.gif', '.mp4']);
+const ANIMATION_EXTENSIONS = new Set(VIDEO_ANIMATION_EXTENSIONS);
+const LOGO_EXTENSIONS = new Set(VIDEO_LOGO_EXTENSIONS);
 const cloudAdapter = adapter => adapter === 'dango' || adapter === 'mvsep' || adapter === 'gaudio';
 const separationDefaults = {
   'audio-separator': { executable: 'audio-separator', model: 'UVR-MDX-NET-Inst_HQ_3.onnx' },
@@ -284,6 +289,12 @@ async function exportKit(input, destination, overwrite = true) {
   for (const stem of input.stems) stems.push({ path: await localFile(stem.path, AUDIO_EXTENSIONS), name: text(stem.name, 'stem name', 300) });
   const cdg = input.cdgPath ? await localFile(input.cdgPath, new Set(['.cdg'])) : null;
   const background = input.backgroundPath ? await localFile(input.backgroundPath, BACKGROUND_EXTENSIONS) : null;
+  const presentation = normalizeVideoPresentation(input.videoPresentation);
+  const presentationFiles = [];
+  for (const kind of ['logo', 'openingAnimation', 'closingAnimation']) {
+    const source = presentation[kind].path;
+    if (source) presentationFiles.push({ path: await localFile(source, kind === 'logo' ? LOGO_EXTENSIONS : ANIMATION_EXTENSIONS), entry: portableVideoPath(kind, source) });
+  }
   const font = input.customFontPath ? await describeLyricFont(input.customFontPath) : null;
   const lyricEntries = Object.entries(input.lyrics);
   if (lyricEntries.some(([name]) => !['lyrics.json', 'lyrics.enhanced.lrc', 'lyrics.srt'].includes(name))) throw new Error('Unexpected kit lyrics file.');
@@ -298,6 +309,7 @@ async function exportKit(input, destination, overwrite = true) {
     });
     if (cdg) zip.addFile(cdg, 'source/' + path.basename(cdg).replace(/[^\p{L}\p{N}._ -]/gu, '_'));
     if (background) zip.addFile(background, portableBackgroundPath(background));
+    for (const asset of presentationFiles) zip.addFile(asset.path, asset.entry);
     if (font) zip.addFile(font.path, portableLyricFontPath(font.path));
     zip.end();
     await pipeline(zip.outputStream, createWriteStream(temporaryFile));
@@ -309,12 +321,29 @@ async function exportVideo(input, destination, overwrite = true) {
   const duration = Number(input.duration);
   if (!Number.isFinite(duration) || duration <= 0 || duration > 3600) throw new Error('The project duration is invalid.');
   const ffmpeg = text(input.ffmpegPath, 'FFmpeg executable', 4096).trim() || 'ffmpeg';
+  const executable = /[\\/]/.test(ffmpeg) ? path.resolve(ffmpeg) : ffmpeg;
+  const title = text(input.title, 'song title', 300), artist = text(input.artist, 'song artist', 300);
+  const { presentation, timeline } = await readVideoPresentation(input, duration,
+    (kind, source) => localFile(source, kind === 'logo' ? LOGO_EXTENSIONS : ANIMATION_EXTENSIONS),
+    source => probeVideoAnimation(source, executable));
+  const sources = [input.backgroundPath, input.cdgPath, input.customFontPath, ...input.stems.map(stem => stem.path),
+    ...videoPresentationAssets(presentation)].filter(Boolean);
+  const target = await fs.realpath(destination).catch(() => path.resolve(destination));
+  const compatible = candidate => process.platform === 'win32' ? candidate.toLowerCase() : candidate;
+  for (const source of sources) {
+    const physical = await fs.realpath(source).catch(() => path.resolve(source));
+    if (compatible(physical) === compatible(target)) throw new Error('Choose a video output different from the source media.');
+  }
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tpv-studio-'));
   const assPath = path.join(tempDir, 'lyrics.ass');
   try {
     const args = ['-y', '-nostdin'];
     let movingBackdrop = false;
     const color = exportBackground(input.backgroundColor, '0x171226');
+    const hasTitles = Boolean(timeline.openingTitle || timeline.closingTitle);
+    if (hasTitles || timeline.openingAnimation || timeline.closingAnimation || presentation.logo.path) args.push('-filter_complex_threads', '1');
+    if (hasTitles) await fs.writeFile(path.join(tempDir, 'title.ass'), toTitleAss(title, artist, presentation.titleCard, input.lyricStyle), 'utf8');
+    if (hasTitles || !input.cdgPath) await stageLyricFonts(tempDir, input.customFontPath);
     if (input.cdgPath) {
       const graphics = path.join(tempDir, 'lyrics.cdg');
       const bytes = await readCdg(input.cdgPath);
@@ -327,8 +356,10 @@ async function exportVideo(input, destination, overwrite = true) {
       await fs.writeFile(graphics, bytes);
       args.push('-protocol_whitelist', 'file,pipe', '-f', 'cdg', '-i', graphics);
     } else {
-      await fs.writeFile(assPath, text(input.ass, 'subtitle data', 8 * 1024 * 1024), 'utf8');
-      await stageLyricFonts(tempDir, input.customFontPath);
+      const ass = Array.isArray(input.lyrics) ? toAss(title, artist, duration, input.lyrics, 'video', input.lyricStyle, {
+        offset: timeline.audioStart, openingCountdown: videoCountdownBar(timeline, input.lyricStyle),
+      }) : input.ass;
+      await fs.writeFile(assPath, text(ass, 'subtitle data', 8 * 1024 * 1024), 'utf8');
       if (input.backgroundPath) {
         const source = await localFile(input.backgroundPath, BACKGROUND_EXTENSIONS);
         const extension = path.extname(source).toLowerCase();
@@ -345,14 +376,23 @@ async function exportVideo(input, destination, overwrite = true) {
       args.push('-i', file);
       stems.push({ volume: Math.max(0, Math.min(2, Number(stem.volume) || 0)) });
     }
-    const filters = [input.cdgPath
-      ? '[0:v]fps=30:start_time=0,format=yuv420p,scale=1500:1080:flags=neighbor,pad=1920:1080:210:0,setsar=1,tpad=stop_mode=clone:stop_duration=' + duration + '[v]'
-      : '[0:v]' + (input.backgroundPath ? 'fps=30,scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1,' : '')
-        + (movingBackdrop && input.backgroundLoop === false ? 'tpad=stop_mode=add:stop_duration=' + duration + ':color=' + color + ',' : '')
-        + 'subtitles=filename=lyrics.ass:fontsdir=fonts[v]'];
+    const base = input.cdgPath
+      ? 'fps=30:start_time=0,format=yuv420p,scale=1500:1080:flags=neighbor,pad=1920:1080:210:0,setsar=1,tpad=stop_mode=clone:stop_duration=' + duration + ','
+      : (input.backgroundPath ? 'fps=30:start_time=0,scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1,' : '')
+        + (movingBackdrop && input.backgroundLoop === false ? 'tpad=stop_mode=add:stop_duration=' + duration + ':color=' + color + ',' : '');
+    const afterSong = Math.max(0, timeline.duration - timeline.audioEnd);
+    const pauseFrames = timeline.audioStart || afterSong
+      ? 'tpad=start_mode=add:start_duration=' + decimal(timeline.audioStart) + ':stop_mode=add:stop_duration=' + decimal(afterSong) + ':color=' + color + ','
+      : '';
+    const filters = ['[0:v]' + base + 'trim=duration=' + duration + ',setpts=PTS-STARTPTS,' + pauseFrames
+      + (input.cdgPath ? 'null' : 'subtitles=filename=lyrics.ass:fontsdir=fonts') + '[song]'];
     stems.forEach((stem, index) => filters.push('[' + (index + 1) + ':a]volume=' + stem.volume + '[a' + index + ']'));
-    filters.push(stems.map((_stem, index) => '[a' + index + ']').join('') + 'amix=inputs=' + stems.length + ':normalize=0:duration=longest,alimiter=limit=0.95[mix]');
-    args.push('-filter_complex', filters.join(';'), '-map', '[v]', '-map', '[mix]', '-t', String(duration),
+    const render = appendVideoPresentation({ args, filters, presentation, timeline, firstInput: stems.length + 1 });
+    const stemMix = stems.map((_stem, index) => '[a' + index + ']').join('') + 'amix=inputs=' + stems.length + ':normalize=0:duration=longest';
+    const songDelay = Math.round(timeline.audioStart * 1000);
+    filters.push(stemMix + (songDelay ? ',adelay=' + songDelay + ':all=1' : '') + ',apad=whole_dur=' + decimal(timeline.duration) + '[songAudio]');
+    filters.push('[songAudio]' + render.audio.map(label => '[' + label + ']').join('') + 'amix=inputs=' + (render.audio.length + 1) + ':normalize=0:duration=longest,alimiter=limit=0.95:latency=1[mix]');
+    args.push('-filter_complex', filters.join(';'), '-map', '[' + render.video + ']', '-map', '[mix]', '-t', decimal(timeline.duration),
       '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k',
       '-movflags', '+faststart', '-metadata', 'title=' + text(input.title, 'song title', 300),
       '-metadata', 'artist=' + text(input.artist, 'song artist', 300), '-f', 'mp4');
@@ -362,6 +402,17 @@ async function exportVideo(input, destination, overwrite = true) {
 }
 
 async function separate(input, directory) {
+async function probeVideoAnimation(source, executable) {
+  const { code, stderr } = await runTool(executable, [
+    '-hide_banner', '-nostdin', '-i', source, '-map', '0:v:0', '-c:v', 'copy', '-t', '0', '-f', 'null', '-',
+  ], 'FFmpeg');
+  const stamp = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(stderr);
+  if (code !== 0 || !stamp) throw new Error('Could not read the opening or closing animation ' + path.basename(source) + '.');
+  const duration = Number(stamp[1]) * 3600 + Number(stamp[2]) * 60 + Number(stamp[3]);
+  if (duration <= 0 || duration > 300) throw new Error('Choose a readable animation up to five minutes long.');
+  return { duration, hasAudio: /Stream #[^\r\n]*\bAudio:/.test(stderr) };
+}
+
   const source = await localFile(input?.sourcePath, AUDIO_EXTENSIONS);
   const adapter = input.adapter ?? defaultSettings.separatorAdapter;
   if (adapter !== 'audio-separator' && adapter !== 'demucs') throw new Error('Choose Audio Separator or Demucs for local separation.');
@@ -486,4 +537,4 @@ async function alignLyrics(input, scriptPath, prepareExecutable, engine = 'whisp
   } finally { await fs.rm(tempDir, { recursive: true, force: true }); }
 }
 
-module.exports = { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, BACKGROUND_EXTENSIONS, cloudAdapter, defaultSettings, separationDefaults, text, localFile, readCdg, loadSettings, validateSettings, saveSettings, exportKit, exportVideo, exportCdg, createGifPreview, separate, alignLyrics, prepareAlignmentInput, runCloudAlignment, probeAudio, writeOutput };
+module.exports = { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, BACKGROUND_EXTENSIONS, ANIMATION_EXTENSIONS, LOGO_EXTENSIONS, cloudAdapter, defaultSettings, separationDefaults, text, localFile, readCdg, loadSettings, validateSettings, saveSettings, exportKit, exportVideo, exportCdg, createGifPreview, separate, alignLyrics, prepareAlignmentInput, runCloudAlignment, probeAudio, probeVideoAnimation, writeOutput };

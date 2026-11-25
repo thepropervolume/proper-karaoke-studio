@@ -266,6 +266,30 @@ a { color: var(--accent); }
 }
 .preview-stage > img, .preview-stage > video, .preview-stage > canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .preview-stage img, .preview-stage video { object-fit: cover; }
+.preview-stage > img.presentation-logo {
+  inset: auto;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  pointer-events: none;
+  z-index: 3;
+}
+.settings-card.presentation-dialog {
+  width: min(840px, calc(100vw - 32px));
+  max-height: 90vh;
+  overflow: auto;
+  color: var(--text);
+  background: var(--panel);
+}
+.presentation-dialog::backdrop { background: #050914ba; }
+.presentation-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: end; gap: 10px; }
+.presentation-preview { width: 100%; max-width: 720px; margin-inline: auto; container-type: inline-size; background: #000; }
+.presentation-song, .presentation-title, .presentation-preview > .presentation-clip { position: absolute; inset: 0; }
+.presentation-song > img, .presentation-song > video, .presentation-song > canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.presentation-title { overflow: hidden; font-weight: 700; line-height: 1; }
+.presentation-title > * { position: absolute; display: block; overflow-wrap: anywhere; }
+.presentation-preview > .presentation-clip { width: 100%; height: 100%; object-fit: cover; }
+.presentation-transport input { min-width: 80px; }
 .backdrop-loop { white-space: nowrap; }
 .cdg-preview { position: absolute; inset: 0; display: grid; place-items: center; background: #000; }
 .preview-stage .cdg-preview canvas { height: 100%; width: auto; max-width: 100%; object-fit: contain; image-rendering: pixelated; }
@@ -452,6 +476,9 @@ option[data-model-ready="true"] { color: var(--muted); }
 .preferences-integration .toolbar { flex-wrap: wrap; }
 .preference-actions { justify-content: flex-end; }
 .lyric-appearance { width: min(730px, 92vw); display: grid; gap: 15px; }
+.appearance-presets { display: grid; gap: 8px; }
+.appearance-presets .row { flex-wrap: wrap; }
+.appearance-presets select, .appearance-presets input[type="text"] { flex: 1; min-width: 150px; }
 .font-select { align-items: stretch; }
 .font-select select { min-width: 0; flex: 1; }
 .font-select button { white-space: nowrap; }

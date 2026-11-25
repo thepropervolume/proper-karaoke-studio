@@ -24,9 +24,11 @@ const { createStudioShortcuts, ensureJsonFile } = require('./studio-shortcuts.cj
 const { bindingFromStudioKey } = require('../domain/studio-shortcuts.ts');
 const { createModelLibrary } = require('./model-library.cjs');
 const { createFontLibrary, describeLyricFont } = require('./lyric-fonts.cjs');
+const { createAppearancePresets } = require('./appearance-presets.cjs');
 const { cloudSeparators } = require('./cloud-separators.cjs');
 const { createDesktopUpdater } = require('@thepropervolume/karaoke-core/desktop-updates');
 const { createStudioUpdates } = require('./studio-updates.cjs');
+const { VIDEO_LOGO_EXTENSIONS, VIDEO_ANIMATION_EXTENSIONS } = require('../domain/video-presentation.ts');
 
 // Files are served to the renderer through random one-session URLs, never file:// URLs.
 protocol.registerSchemesAsPrivileged([{
@@ -315,6 +317,23 @@ app.whenReady().then(() => {
   handleEditor('studio:toggle-full-screen', () => mainWindow.setFullScreen(!mainWindow.isFullScreen()));
   const models = createModelLibrary(path.join(app.getPath('userData'), 'models'));
   const fonts = createFontLibrary(path.join(app.getPath('userData'), 'lyric-fonts'));
+  const appearancePresets = createAppearancePresets(app.getPath('userData'), fonts);
+  handleEditor('studio:list-appearance-presets', (_event, kind) => appearancePresets.list(kind));
+  handleEditor('studio:save-appearance-default', (_event, input) => appearancePresets.saveDefault(input));
+  handleEditor('studio:save-appearance-preset', (_event, input) => appearancePresets.save(input));
+  handleEditor('studio:import-appearance-preset', async (_event, kind) => {
+    const result = await dialog.showOpenDialog(mainWindow, { title: 'Import Appearance Preset', properties: ['openFile'],
+      filters: [{ name: 'Studio Preset JSON', extensions: ['json'] }] });
+    return result.canceled || !result.filePaths[0] ? null : appearancePresets.import(kind, result.filePaths[0]);
+  });
+  handleEditor('studio:export-appearance-preset', async (_event, input) => {
+    const library = await appearancePresets.list(input.kind);
+    const preset = library.presets.find(item => item.id === input.id);
+    if (!preset) throw new Error('Choose a saved appearance preset.');
+    const title = preset.name.replace(/[\\/:*?"<>|]/g, '_').replace(/^\.+/, '') || 'Appearance';
+    const destination = await chooseSave(title + '.tpv-preset.json', 'Studio Preset JSON', 'json');
+    return destination ? appearancePresets.export(input.kind, input.id, destination, input.includeFont) : null;
+  });
   handleEditor('studio:list-lyric-fonts', () => fonts.list());
   handleEditor('studio:add-lyric-font', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { title: 'Add Lyric Font File', properties: ['openFile'],
@@ -388,6 +407,21 @@ app.whenReady().then(() => {
     return mediaUrl(await localFile(value, new Set([...AUDIO_EXTENSIONS, ...BACKGROUND_EXTENSIONS])));
   });
   handleEditor('studio:register-backdrop', (_event, file) => registerBackdrop(file, preferences.get().ffmpegPath));
+  handleEditor('studio:register-presentation-media', async (_event, input) => {
+    if (input?.kind !== 'logo' && input?.kind !== 'animation') throw new Error('Choose a logo or animation.');
+    const extensions = input.kind === 'logo' ? VIDEO_LOGO_EXTENSIONS : VIDEO_ANIMATION_EXTENSIONS;
+    return mediaUrl(await localFile(input.file, new Set(extensions)));
+  });
+  handleEditor('studio:choose-presentation-media', async (_event, kind) => {
+    if (kind !== 'logo' && kind !== 'animation') throw new Error('Choose a logo or animation.');
+    const logo = kind === 'logo';
+    const extensions = logo ? VIDEO_LOGO_EXTENSIONS : VIDEO_ANIMATION_EXTENSIONS;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: logo ? 'Choose Overlay Logo' : 'Choose Animation Video', properties: ['openFile'],
+      filters: [{ name: logo ? 'Logo Images' : 'Animation Video', extensions: extensions.map(ext => ext.slice(1)) }],
+    });
+    return result.canceled ? null : result.filePaths[0];
+  });
   handleEditor('studio:timing-context-menu', (_event, context) => timingContextMenu(mainWindow, context));
   ipcMain.handle('studio:read-cdg', (_event, value) => readCdg(value));
   ipcMain.handle('studio:export-cdg', trackProjectOperation(async (_event, input) => {

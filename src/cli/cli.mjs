@@ -19,6 +19,7 @@ import { addProjectStems, loadProject, projectCommand, projectFile, projectRevis
 import { alignLyricsFromFiles, formatLyricsFile } from './standalone-lyrics.mjs';
 import { normalizeLyricFormatOptions, validateLyricFormatOptions } from '../domain/lyric-format.ts';
 import { version } from '../../package.json';
+import { videoPresentationAssets } from '../domain/video-presentation.ts';
 
 const commands = {
   'project init': ' [--title <title>] [--artist <artist>] [--duration <seconds>] [--force]',
@@ -110,7 +111,8 @@ async function exportProject(action, args, settings) {
   const file = projectFile(args);
   const project = await loadProject(file);
   const customFontPath = project.lyricStyle?.font === 'custom' ? project.lyricStyle.customFont?.path : undefined;
-  const protectedFiles = [file, settingsFile(args.options), project.backgroundPath, project.importedCdg, customFontPath, ...project.stems.map(stem => stem.path)];
+  const protectedFiles = [file, settingsFile(args.options), project.backgroundPath, project.importedCdg, customFontPath,
+    ...project.stems.map(stem => stem.path), ...videoPresentationAssets(project.videoPresentation)];
   const resolvedDestination = await realpath(destination).catch(() => destination);
   const samePath = (a, b) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
   for (const input of protectedFiles.filter(Boolean)) {
@@ -154,7 +156,9 @@ async function exportProject(action, args, settings) {
       customFontPath,
       cdgPath: project.lyrics.length ? null : project.importedCdg,
       ffmpegPath: args.options.ffmpeg || settings.ffmpegPath,
-      ass: toAss(project.title, project.artist, project.durationSeconds, project.lyrics, 'video', project.lyricStyle),
+      lyrics: project.lyrics,
+      lyricStyle: project.lyricStyle,
+      videoPresentation: project.videoPresentation,
     }, destination, overwrite);
   } else {
     const { json, lrc, srt } = lyricContents(project);
@@ -164,6 +168,7 @@ async function exportProject(action, args, settings) {
       stems: project.stems,
       cdgPath: project.importedCdg,
       backgroundPath: project.backgroundPath,
+      videoPresentation: project.videoPresentation,
       customFontPath,
     }, destination, overwrite);
   }

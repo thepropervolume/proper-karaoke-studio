@@ -14,6 +14,7 @@ const paths = {
   copy: <><rect x="8" y="8" width="12" height="13" rx="1.5" /><path d="M16 5V3H3v13h2" /></>,
   audio: <><path d="M9 17V5l10-2v12" /><circle cx="6" cy="17.5" r="3" /><circle cx="16" cy="15.5" r="3" /></>,
   lyrics: <><path d="M4 5h16M4 10h11M4 15h16M4 20h9" /></>,
+  film: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 4v16m10-16v16M3 10h4m10 0h4M3 15h4m10 0h4" /></>,
   export: <><path d="M12 3v12m-5-5 5 5 5-5M4 15v5h16v-5" /></>,
   display: <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></>,
   image: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="m4 17 5-5 4 3 3-4 5 5" /><circle cx="9" cy="8" r="1" /></>,

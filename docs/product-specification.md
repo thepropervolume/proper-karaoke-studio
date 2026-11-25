@@ -11,22 +11,27 @@ The Proper Volume Karaoke Studio is a desktop authoring tool for creating karaok
 - Import multiple local audio files and label each as instrumental, lead, backing, or other; voice names are editable.
 - Preview synchronized stems with independent stem gain and master volume.
 - Capture line or word starts at the playhead, with undo, redo, and session cancellation. Set individual timing fields from the context menu or split a line into an editable word draft.
+- Shift all lyric cues, a selection, or one line by a shared offset that also moves its word timings. Undo the most recent shift.
 - Scrub, pan, and zoom at the pointer in a resizable waveform. Move a cue to the playhead while retaining word offsets. Transport can skip back 5 seconds or ahead 10 seconds.
 - Work in a Booth-style workspace with Studio's Bouncing Ball icon, Day and Night appearance, selectable accents, a large singer preview, a resizable editor, and fixed playback controls. [Workspace guide](workspace.md)
 - Save a bundled or custom lyric font, font size, leading, casing, colors, and two to six rows. Four rows are the default. Finished lines hold until halfway through the next sung line when the row is available. The preview and authored MP4 and CD+G exports share lyric and bar timing.
+- Save defaults and reusable presets for lyric appearance and title cards. Export and import presets between computers, with optional inclusion of custom lyric fonts.
 - Format imported or pasted lyrics with adjustable minimum, target, and maximum line lengths. The formatter leaves timed cues available until the user rebuilds them. [Formatting guide](workspace.md)
 - Force-align supplied lyrics to a selected audio track with WhisperX or Qwen locally, or with Vultr or AudioShake after upload approval. Studio retains supplied words and line breaks, limits Qwen timestamps to the selected audio, and handles missing WhisperX tokenizer data without a shared-directory download. [Lyric Sync](lyric-synchronization.md)
 - Import and export the Studio lyrics JSON schema, Enhanced LRC word timestamps, and SRT line cues. Studio uses Karaoke Core for LRC, SRT, and the common timing types.
 - Map external timed lyric JSON through explicit JSON Pointer paths and time units in the [CLI](json-lyric-import.md).
 - Render an MP4 with mixed audio, karaoke highlighting, and optional still, GIF, or muted MP4 backgrounds. Animated backgrounds support looping; the preview and rendered action follow the song timeline.
+- Compose an MP4 with a logo overlay, title cards, and optional opening and closing animations. Preview uses the export timeline. A long opening can delay song audio while preserving cue offsets and the full audio duration.
 - Import and preview original CD+G graphics with local audio, render them to MP4, and author new CD+G graphics from timed cues. [CD+G workflow](cdg.md)
 - Export a ZIP-based TPV kit containing relative-path project metadata, lyrics, audio stems, and optional backdrop media and original CD+G graphics.
 - Reopen a TPV kit from **Open Project** or the CLI. Studio creates an editable project with its own adjacent media folder and preserves its cue and stem settings.
 - Download verified model weights or reuse local Ultimate Vocal Remover models. Audio Separator ensembles can combine models and split the result into lead, backing, and instrumental tracks. [Model library](models.md)
+- Save the project before separating stems. Continue editing lyrics while separation runs. Outputs go to the project’s stem folder, and the transport reports progress and time remaining when available. [Stem separation](audio-separation.md)
 - Manage encrypted credentials for Dango AI, MVSEP, and GAUDIO. Review and approve each cloud stem-separation request. Custom entries store credentials for other services.
 - Apply Preferences for this session or save them as defaults. Reset individual fields to the saved defaults. Assign keyboard shortcuts and open the JSON preferences and keybindings files from Studio.
 - Open bundled documentation and keyboard-shortcut preferences from Help. Check for desktop updates from Help using Karaoke Core's signed release feed. Studio shows a startup notice when an automatic check finds a new version. Preferences can download and verify updates, prepare installation at normal quit, or turn off automatic checks. Studio finishes its project-recovery write before handing off a prepared installer. [Update behavior](releases.md#update-studio)
 - Provide application search terms in Windows Start shortcut, macOS Spotlight, and Linux desktop launcher metadata. [Desktop search](releases.md#find-studio-in-desktop-search)
+- Show the running version and bundled release notes in **Help → About** and **Help → What’s New**.
 - Record a microphone take, audition the take, and save it as a labeled local WAV stem from the [desktop editor](voice-recording.md).
 - Open and save editable Studio projects in one shared file format for the desktop editor and CLI.
 - Keep local snapshots of unsaved desktop edits and pending lyric text. [Project recovery](project-recovery.md) restores these snapshots after reopening Studio.

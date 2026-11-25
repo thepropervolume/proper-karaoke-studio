@@ -89,7 +89,7 @@ export function portableLyricFontPath(source: string) {
 export const lyricFrames = { video: { width: 1920, height: 1080 }, cdg: { width: 300, height: 216 } } as const;
 export type LyricBar = { start: number; end: number; x: number; y: number; width: number; height: number; border: number; style: LyricBarStyle };
 
-function timedBar(style: LyricBarStyle, width: number, height: number, start: number, end: number): LyricBar {
+export function timedBar(style: LyricBarStyle, width: number, height: number, start: number, end: number): LyricBar {
   const w = Math.max(2, Math.round(width * style.width / 100)), h = Math.max(2, Math.round(height * style.height / 100));
   const x = Math.min(width - w, Math.max(0, Math.round(width * style.x / 100 - w / 2)));
   const y = Math.min(height - h, Math.max(0, Math.round(height * style.y / 100 - h / 2)));

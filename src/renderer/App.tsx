@@ -11,6 +11,7 @@ import { formatLyricText, MAXIMUM_LYRIC_TEXT_BYTES, readLyricVersions, type Lyri
 import { applyForcedAlignment } from '../domain/forced-alignment';
 import { alignmentEngines } from '../domain/alignment-engines';
 import { defaultLyricStyle, lyricFonts, normalizeLyricStyle } from '../domain/lyric-style';
+import { defaultTitleCard, normalizeVideoPresentation } from '../domain/video-presentation';
 import { DEFAULT_LYRIC_FORMAT_OPTIONS } from '../domain/lyric-format';
 import { studioShortcutForEvent, studioShortcutHint, type StudioShortcutAction } from '../domain/studio-shortcuts';
 import { CdgPlayer, cdgByteLimit } from '../domain/cdg';
@@ -25,6 +26,9 @@ import { useStudioShortcuts } from './useStudioShortcuts';
 import { LyricAppearance } from './LyricAppearance';
 import { paintStudioBars } from './lyric-bars';
 import { BackdropPreview } from './BackdropPreview';
+import { VideoPresentationDialog, type PresentationAsset } from './VideoPresentationDialog';
+import { PreviewLogo, VideoPreview } from './VideoPreview';
+import { animationDuration, usePresentationUrl } from './video-media';
 import { LyricFormatFields } from './LyricFormatFields';
 import { version } from '../../package.json';
 import markDark from '../../assets/branding/icon-dark.svg';
@@ -116,6 +120,7 @@ export function App() {
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [lyricAppearanceOpen, setLyricAppearanceOpen] = useState(false);
   const [lyricStyle, setLyricStyle] = useState(defaultLyricStyle);
+  const [freshLyricStyle, setFreshLyricStyle] = useState(defaultLyricStyle);
   const [fontReady, setFontReady] = useState(0);
   const [loadedCustomFont, setLoadedCustomFont] = useState('');
   const [draftOpen, setDraftOpen] = useState(true);
@@ -166,6 +171,12 @@ export function App() {
   const [decodedCdg, setDecodedCdg] = useState<CdgPlayer | null>(null);
   const [background, setBackground] = useState<{ url: string; path: string; motion: boolean } | null>(null);
   const [backgroundLoop, setBackgroundLoop] = useState(true);
+  const [videoPresentationOpen, setVideoPresentationOpen] = useState(false);
+  const [freshTitle, setFreshTitle] = useState(defaultTitleCard);
+  const [videoPresentation, setVideoPresentation] = useState(() => normalizeVideoPresentation());
+  const presentationLogo = usePresentationUrl(videoPresentation.logo.path, 'logo');
+  const openingAnimation = usePresentationUrl(videoPresentation.openingAnimation.path, 'animation');
+  const closingAnimation = usePresentationUrl(videoPresentation.closingAnimation.path, 'animation');
   const [openedProject, setOpenedProject] = useState<(StudioProjectOrigin & { snapshot: string | null }) | null>(null);
   const [projectTransition, setProjectTransition] = useState(true);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
@@ -348,6 +359,7 @@ export function App() {
     setDecodedCdg(graphics);
     setBackground(image);
     setBackgroundLoop(project.backgroundLoop !== false);
+    setVideoPresentation(normalizeVideoPresentation(project.videoPresentation));
     await loadStems(media, project.durationSeconds || undefined);
     setOpenedProject(origin ? { ...origin, snapshot: restored ? null : JSON.stringify(project) } : null);
     setStatus(restored ? 'Recovered unsaved changes.' : 'Opened ' + basename(origin?.file ?? 'Project') + '.');
@@ -377,6 +389,16 @@ export function App() {
         initial = null;
         setError(cause instanceof Error ? cause.message : String(cause));
       }
+      try {
+        const { defaultStyle } = await window.studio.listAppearancePresets('lyrics');
+        setFreshLyricStyle(defaultStyle);
+        if (!initial) setLyricStyle(defaultStyle);
+      } catch (cause) { setError(preferenceError(cause)); }
+      try {
+        const { defaultStyle } = await window.studio.listAppearancePresets('title');
+        setFreshTitle(defaultStyle);
+        if (!initial) setVideoPresentation(current => ({ ...current, titleCard: defaultStyle }));
+      } catch (cause) { setError(preferenceError(cause)); }
       try {
         const entries = await window.studio.startRecovery();
         setRecoveryEntries(entries);
@@ -783,6 +805,23 @@ export function App() {
     } catch (cause) { setError(preferenceError(cause)); }
     finally { setBusy(false); }
   };
+  const choosePresentationAsset = async (asset: PresentationAsset) => {
+    const kind = asset === 'logo' ? 'logo' : 'animation';
+    try {
+      const path = await window.studio.choosePresentationMedia(kind);
+      if (!path) return;
+      const url = await window.studio.registerPresentationMedia(path, kind);
+      const length = asset === 'logo' ? 0 : await animationDuration(url);
+      setVideoPresentation(current => normalizeVideoPresentation({
+        ...current, [asset]: { ...current[asset], path, ...(asset === 'logo' ? {} : { duration: length }) },
+      }));
+    } catch (cause) { throw new Error(preferenceError(cause)); }
+  };
+  const showVideoPresentation = () => {
+    if (generation.current) player.current?.pause(generation.current);
+    setPlaying(false);
+    setVideoPresentationOpen(true);
+  };
 
   // Timing captures stay reversible until Finish Timing. Recovery keeps the original cues until then.
   const projectLines = timingSession?.frames[0].lines ?? lines;
@@ -791,12 +830,13 @@ export function App() {
     return {
       schema: 'com.thepropervolume.karaoke-studio', version: 1, title, artist, durationSeconds: duration,
       stems: stems.map(({ file: _file, url: _url, ...stem }) => stem), lyrics: projectLines, importedCdg: cdgPath, backgroundPath: background?.path ?? null,
-      backgroundLoop, lyricStyle, ...(Object.keys(drafts).length ? { wordTimingDrafts: drafts } : {}),
+      backgroundLoop, lyricStyle, videoPresentation, ...(Object.keys(drafts).length ? { wordTimingDrafts: drafts } : {}),
     };
-  }, [title, artist, duration, stems, projectLines, cdgPath, background?.path, backgroundLoop, lyricStyle, wordTimingDrafts]);
+  }, [title, artist, duration, stems, projectLines, cdgPath, background?.path, backgroundLoop, lyricStyle, videoPresentation, wordTimingDrafts]);
   const projectChanged = useMemo(() => openedProject ? openedProject.snapshot !== JSON.stringify(currentProject)
-    : Boolean(stems.length || lines.length || background || cdgPath || title || artist || JSON.stringify(lyricStyle) !== JSON.stringify(defaultLyricStyle)),
-  [openedProject, currentProject, stems.length, lines.length, background, cdgPath, title, artist, lyricStyle]);
+    : Boolean(stems.length || lines.length || background || cdgPath || title || artist || JSON.stringify(lyricStyle) !== JSON.stringify(freshLyricStyle)
+      || JSON.stringify(videoPresentation) !== JSON.stringify(normalizeVideoPresentation({ titleCard: freshTitle }))),
+  [openedProject, currentProject, stems.length, lines.length, background, cdgPath, title, artist, lyricStyle, freshLyricStyle, videoPresentation, freshTitle]);
   const pendingLyrics = draftPending ? lyricsDraft : null;
 
   useEffect(() => {
@@ -872,7 +912,7 @@ export function App() {
         name: safeName(title), manifest: JSON.stringify(kitProject, null, 2),
         lyrics: { 'lyrics.json': toLyricsJson(title, artist, duration, lines), 'lyrics.enhanced.lrc': toLrc(title, artist, lines), 'lyrics.srt': toSrt(lines) },
         stems: stems.map(stem => ({ path: stem.path, name: stem.name, role: stem.role, voice: stem.voice, volume: stem.volume })),
-        cdgPath, backgroundPath: background?.path, customFontPath,
+        cdgPath, backgroundPath: background?.path, customFontPath, videoPresentation,
       });
       if (saved) setStatus('Exported TPV kit: ' + saved.split(/[\\/]/).at(-1) + '.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
@@ -888,6 +928,7 @@ export function App() {
         cdgPath: lines.length ? null : cdgPath,
         stems: stems.map(stem => ({ path: stem.path, name: stem.name, role: stem.role, voice: stem.voice, volume: stem.volume })),
         ass: toAss(title, artist, duration, lines, 'video', lyricStyle),
+        lyrics: lines, lyricStyle, videoPresentation,
       });
       if (saved) setStatus('Rendered video: ' + saved.split(/[\\/]/).at(-1) + '.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); setStatus('Video export failed.'); }
@@ -907,9 +948,9 @@ export function App() {
     finally { setBusy(false); }
   };
 
-  const editorInert = projectTransition || recoveryOpen || voiceRecorderOpen || settingsOpen || appearanceOpen || lyricAppearanceOpen;
+  const editorInert = projectTransition || recoveryOpen || voiceRecorderOpen || settingsOpen || appearanceOpen || lyricAppearanceOpen || videoPresentationOpen;
   const menuEnabled = !editorInert && !busy && !timing;
-  const helpEnabled = settingsLoaded && !projectTransition && !recoveryOpen && !voiceRecorderOpen && !appearanceOpen && !lyricAppearanceOpen;
+  const helpEnabled = settingsLoaded && !projectTransition && !recoveryOpen && !voiceRecorderOpen && !appearanceOpen && !lyricAppearanceOpen && !videoPresentationOpen;
   const hasStems = stems.length > 0, hasLyrics = lines.length > 0, hasCdg = Boolean(cdgPath), canStyle = !cdgPlayer;
   const openPreferences = (section: StudioPreferenceSection = 'tools') => { setSettingsSection(section); setSettingsOpen(true); };
   const pickAudio = () => { void window.studio.chooseAudioFiles().then(addLocalPaths).catch(cause => setError(preferenceError(cause))); };
@@ -936,6 +977,7 @@ export function App() {
       case 'preferences': openPreferences(); break;
       case 'appearance': setAppearanceOpen(true); break;
       case 'lyrics-style': if (canStyle) setLyricAppearanceOpen(true); break;
+      case 'video-presentation': showVideoPresentation(); break;
       case 'theme-day': setAppearance(current => ({ ...current, theme: 'day' })); break;
       case 'theme-night': setAppearance(current => ({ ...current, theme: 'night' })); break;
       case 'accent-blue': setAppearance(current => ({ ...current, accent: 'blue' })); break;
@@ -1070,6 +1112,7 @@ export function App() {
           <div><div className="eyebrow">Project</div><h1 id="preview-title">Singer Preview</h1></div>
           <div className="toolbar">
             <IconButton icon="palette" label="Lyric Appearance" disabled={!canStyle || busy} onClick={() => setLyricAppearanceOpen(true)} />
+            <IconButton icon="film" label="Video Presentation" disabled={busy || timing} onClick={showVideoPresentation} />
             {background?.motion && <label className="row backdrop-loop" data-tip="Repeat the muted backdrop for the length of the song.">
               <input type="checkbox" checked={backgroundLoop} onChange={event => setBackgroundLoop(event.target.checked)} /> Loop
             </label>}
@@ -1095,6 +1138,7 @@ export function App() {
                 <button type="button" onClick={() => { setWorkspace('lyrics'); setDraftOpen(true); }}>Add Lyrics</button>
               </div>}
             </>}
+            <PreviewLogo url={presentationLogo?.url} value={videoPresentation.logo} />
           </div>
         </div>
       </section>
@@ -1381,7 +1425,13 @@ export function App() {
         </div>
       </section>
     </div>}
-    {lyricAppearanceOpen && <LyricAppearance value={lyricStyle} change={setLyricStyle} close={() => setLyricAppearanceOpen(false)}
+    {videoPresentationOpen && <VideoPresentationDialog value={videoPresentation} change={setVideoPresentation} titleDefault={setFreshTitle}
+      pick={choosePresentationAsset} close={() => setVideoPresentationOpen(false)} songTitle={title} artist={artist}
+      missing={Boolean(presentationLogo?.missing || openingAnimation?.missing || closingAnimation?.missing)}
+      preview={<VideoPreview value={videoPresentation} lines={lines} duration={previewDuration} stems={stems} volume={volume} title={title} artist={artist}
+        style={lyricStyle} font={previewFont} backdrop={background} loop={backgroundLoop} cdg={cdgPlayer}
+        assets={{ logo: presentationLogo?.url, openingAnimation: openingAnimation?.url, closingAnimation: closingAnimation?.url }} />} />}
+    {lyricAppearanceOpen && <LyricAppearance value={lyricStyle} change={setLyricStyle} onDefaultSaved={setFreshLyricStyle} close={() => setLyricAppearanceOpen(false)}
       backdrop={background?.path} busy={busy} chooseBackdrop={() => void chooseBackground()}
       clearBackdrop={() => { setBackground(null); setBackgroundLoop(true); }} />}
     {voiceRecorderOpen && <VoiceRecorder title={title} roles={roles} onSaved={addVoiceRecording} onClose={() => setVoiceRecorderOpen(false)} />}

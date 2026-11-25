@@ -241,6 +241,11 @@ export class KaraFunPlayer {
     }
   }
 
+  /** Unlock audio from a user gesture before an opening sequence needs it. */
+  async prime(generation: string): Promise<void> {
+    if (this.matches(generation)?.ready) await this.ensureContext().resume();
+  }
+
   async play(generation: string): Promise<boolean> {
     const current = this.matches(generation);
     if (!current?.ready || current.outputBlocked || current.status === 'error' || current.savedPosition >= current.duration) return false;

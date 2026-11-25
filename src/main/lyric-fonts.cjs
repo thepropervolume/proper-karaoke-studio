@@ -63,6 +63,18 @@ async function describeLyricFont(file) {
 }
 
 function createFontLibrary(root) {
+  async function install(bytes, extension, { family, exportName }) {
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    const path = join(root, digest + extension);
+    await mkdir(root, { recursive: true });
+    const staged = join(root, randomUUID() + '.tmp');
+    try {
+      await writeFile(staged, bytes, { flag: 'wx', mode: 0o600 });
+      await rename(staged, path);
+    } finally { await rm(staged, { force: true }); }
+    return { path, family, exportName };
+  }
+
   return {
     async list() {
       const entries = await readdir(root, { withFileTypes: true }).catch(error => {
@@ -78,18 +90,23 @@ function createFontLibrary(root) {
       return fonts.sort((a, b) => a.family.localeCompare(b.family));
     },
     async add(file) {
-      const { bytes, family, exportName } = await fontFile(file);
-      const digest = createHash('sha256').update(bytes).digest('hex');
-      const path = join(root, digest + extname(file).toLowerCase());
-      await mkdir(root, { recursive: true });
-      const staged = join(root, randomUUID() + '.tmp');
-      try {
-        await writeFile(staged, bytes, { flag: 'wx', mode: 0o600 });
-        await rename(staged, path);
-      } finally { await rm(staged, { force: true }); }
-      return { path, family, exportName };
+      const { bytes, ...names } = await fontFile(file);
+      return install(bytes, extname(file).toLowerCase(), names);
+    },
+    async importBytes(bytes, extension) {
+      if (!Buffer.isBuffer(bytes) || bytes.length > fontLimit || !FONT_EXTENSIONS.has(extension)) {
+        throw new Error('The preset font must be a TrueType or OpenType file no larger than 32 MB.');
+      }
+      return install(bytes, extension, readFontNames(bytes));
+    },
+    async findByHash(digest, extension) {
+      if (!/^[0-9a-f]{64}$/.test(digest) || !FONT_EXTENSIONS.has(extension)) return null;
+      const file = join(root, digest + extension);
+      const font = await fontFile(file).catch(() => null);
+      return font && createHash('sha256').update(font.bytes).digest('hex') === digest
+        ? { path: file, family: font.family, exportName: font.exportName } : null;
     },
   };
 }
 
-module.exports = { FONT_EXTENSIONS, describeLyricFont, createFontLibrary, readFontNames, fontLimit };
+module.exports = { FONT_EXTENSIONS, describeLyricFont, createFontLibrary, readFontNames, fontFile, fontLimit };

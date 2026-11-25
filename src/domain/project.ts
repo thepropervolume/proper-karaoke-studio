@@ -2,6 +2,7 @@ import type { LyricLine as CoreLyricLine, TimedWord } from '@thepropervolume/kar
 import { layoutLyrics, portableLyricFontPath, type LyricStyle } from './lyric-style';
 import { lyricTextFields, lyricTimingTokens } from './lyric-timing-text';
 import type { WordTimingDrafts } from './manual-timing';
+import { normalizeVideoPresentation, portableVideoPath, type VideoPresentation } from './video-presentation';
 
 export type { TimedWord } from '@thepropervolume/karaoke-core';
 export type LyricLine = CoreLyricLine & { timingText?: string };
@@ -15,6 +16,7 @@ export type StudioProject = {
   schema: 'com.thepropervolume.karaoke-studio'; version: 1; title: string; artist: string;
   durationSeconds: number; stems: Omit<StudioStem, 'file' | 'url'>[]; lyrics: LyricLine[]; importedCdg?: string | null;
   backgroundPath?: string | null; backgroundLoop?: boolean; lyricStyle?: LyricStyle;
+  videoPresentation?: VideoPresentation;
   wordTimingDrafts?: WordTimingDrafts;
 };
 
@@ -121,6 +123,11 @@ export function toPortableKitProject(project: StudioProject): StudioProject {
     portable.lyricStyle = style.font === 'custom'
       ? { ...style, customFont: { ...customFont, path: portableLyricFontPath(customFont.path) } } : style;
   }
+  const videoPresentation = normalizeVideoPresentation(portable.videoPresentation);
+  for (const kind of ['logo', 'openingAnimation', 'closingAnimation'] as const) {
+    const asset = videoPresentation[kind];
+    if (asset.path) asset.path = portableVideoPath(kind, asset.path);
+  }
   return {
     ...portable,
     stems: project.stems.map((stem, index) => ({
@@ -129,6 +136,7 @@ export function toPortableKitProject(project: StudioProject): StudioProject {
     })),
     importedCdg: project.importedCdg ? 'source/' + archiveName(project.importedCdg) : null,
     backgroundPath: backgroundPath ? portableBackgroundPath(backgroundPath) : null,
+    videoPresentation,
   };
 }
 

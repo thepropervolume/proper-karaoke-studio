@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { defaultLyricStyle, lyricFonts, lyricLineCounts, type CustomLyricFont, type LyricBarStyle, type LyricStyle } from '../domain/lyric-style';
 import { HelpTip } from './HelpTip';
+import { AppearancePresetControls } from './AppearancePresetControls';
 import { PreferenceField, preferenceError } from './PreferencesDialog';
 
 const palette = [
@@ -80,9 +81,10 @@ function BarControls<Style extends LyricBarStyle>({ title, description, value, d
   </details>;
 }
 
-export function LyricAppearance({ value, change, close, backdrop, chooseBackdrop, clearBackdrop, busy }: {
+export function LyricAppearance({ value, change, close, backdrop, chooseBackdrop, clearBackdrop, busy, onDefaultSaved }: {
   value: LyricStyle; change(next: LyricStyle): void; close(): void;
   backdrop?: string; chooseBackdrop(): void; clearBackdrop(): void; busy: boolean;
+  onDefaultSaved(value: LyricStyle): void;
 }) {
   const [fonts, setFonts] = useState<CustomLyricFont[]>([]);
   const [fontBusy, setFontBusy] = useState(false);
@@ -107,6 +109,7 @@ export function LyricAppearance({ value, change, close, backdrop, chooseBackdrop
       <div className="row spaced"><h2 id="lyric-appearance-title">Lyric Appearance</h2>
         <button type="button" autoFocus onClick={close}>Done</button>
       </div>
+      <AppearancePresetControls kind="lyrics" value={value} onChange={change} onDefaultSaved={onDefaultSaved} />
       <div className="preferences-fields">
         <PreferenceField label="Font" hint="The selected font is used in both the singer preview and video exports." reset={() => change({ ...value, font: defaultLyricStyle.font })}>
           {id => <div className="row font-select"><select id={id} value={selected} onChange={event => {
@@ -153,7 +156,7 @@ export function LyricAppearance({ value, change, close, backdrop, chooseBackdrop
           reset={() => change({ ...value, countdownBar: { ...value.countdownBar, minimumBreak: defaultLyricStyle.countdownBar.minimumBreak } })} />
       </BarControls>
       {error && <p className="error" role="alert">{error}</p>}
-      <div className="row preference-actions"><button type="button" onClick={() => change({ ...defaultLyricStyle })}>Reset Defaults</button></div>
+      <div className="row preference-actions"><button type="button" onClick={() => change({ ...defaultLyricStyle })}>Reset to Factory Defaults</button></div>
     </section>
   </div>;
 }

@@ -39,6 +39,7 @@ function createStudioMenu(window, icon) {
       { label: 'Theme', submenu: [choice('theme-day', 'Day'), choice('theme-night', 'Night')] },
       { label: 'Accent Color', submenu: [choice('accent-blue', 'Blue'), choice('accent-pink', 'Pink'), choice('accent-purple', 'Purple')] },
       action('lyrics-style', 'Lyric Appearance…'),
+      action('video-presentation', 'Video Presentation…'),
       { type: 'separator' },
       { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
     ] },
@@ -79,6 +80,7 @@ function createStudioMenu(window, icon) {
     enable(['export-cdg', 'export-lrc', 'export-srt', 'export-json'], lyrics);
     enable(['export-cdg-original'], cdg);
     enable(['lyrics-style'], editing && state.styling === true);
+    enable(['video-presentation'], editing);
     menu.getMenuItemById(state.theme === 'day' ? 'theme-day' : 'theme-night').checked = true;
     menu.getMenuItemById('accent-' + (['blue', 'pink', 'purple'].includes(state.accent) ? state.accent : 'blue')).checked = true;
   };
