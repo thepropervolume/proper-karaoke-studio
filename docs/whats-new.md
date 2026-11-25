@@ -1,5 +1,10 @@
 # What’s New in Karaoke Studio
 
+## 0.12.1
+
+- Export CD+G with clearer, bolder lyrics, safer margins for wide lines, and a magenta highlight sweep that keeps the letters intact.
+- Draw incoming rows more evenly while the current lyric is being highlighted.
+
 ## 0.12.0
 
 - Shift word and line timings for one cue, a selection, or the whole song.
