@@ -3,11 +3,26 @@ const { join } = require('node:path');
 
 let documentation;
 
-async function openDocumentationWindow(editor) {
+function loadGuide(window, topic) {
+  if (process.env.VITE_DEV_SERVER_URL) {
+    const url = new URL('/src/help/index.html', process.env.VITE_DEV_SERVER_URL);
+    if (topic) url.hash = topic;
+    return window.loadURL(url.href);
+  }
+  return window.loadFile(join(__dirname, '..', 'dist', 'src', 'help', 'index.html'), { hash: topic });
+}
+
+async function openDocumentationWindow(editor, topic = '') {
   if (documentation && !documentation.isDestroyed()) {
-    if (documentation.isMinimized()) documentation.restore();
-    documentation.show();
-    documentation.focus();
+    const window = documentation;
+    if (topic && !window.webContents.getURL().endsWith('#' + topic)) {
+      try { await loadGuide(window, topic); }
+      catch { if (!window.isDestroyed()) dialog.showErrorBox('Documentation unavailable', 'Studio could not open this guide.'); }
+    }
+    if (window.isDestroyed()) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
     return;
   }
   if (editor.isDestroyed()) return;
@@ -22,11 +37,7 @@ async function openDocumentationWindow(editor) {
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.on('closed', () => { if (documentation === window) documentation = undefined; });
   try {
-    if (process.env.VITE_DEV_SERVER_URL) {
-      await window.loadURL(new URL('/src/help/index.html', process.env.VITE_DEV_SERVER_URL).href);
-    } else {
-      await window.loadFile(join(__dirname, '..', 'dist', 'src', 'help', 'index.html'));
-    }
+    await loadGuide(window, topic);
     if (!window.isDestroyed()) window.show();
   } catch {
     if (window.isDestroyed()) return;

@@ -7,7 +7,7 @@ const guides = [
   ['workspace', 'Workspace'], ['keyboard-shortcuts', 'Keyboard Shortcuts'], ['lyric-synchronization', 'Lyric Synchronization'],
   ['audio-separation', 'Audio Separation'], ['models', 'Model Library'], ['voice-recording', 'Voice Recording'],
   ['cdg', 'CD+G'], ['json-lyric-import', 'JSON Lyric Import'], ['project-recovery', 'Project Recovery'],
-  ['cli', 'Command Line'], ['releases', 'Install and Update'],
+  ['cli', 'Command Line'], ['releases', 'Install and Update'], ['whats-new', 'What’s New'],
 ] as const;
 const guideIds: ReadonlySet<string> = new Set(guides.map(([id]) => id));
 const moduleId = 'virtual:studio-documentation';

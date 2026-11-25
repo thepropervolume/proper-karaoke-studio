@@ -249,7 +249,7 @@ function createWindow({ checkForUpdates = false } = {}) {
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   const window = mainWindow;
-  updateStudioMenu = createStudioMenu(window);
+  updateStudioMenu = createStudioMenu(window, brandIcon());
   bindStudioShortcuts(window);
   microphoneExpiresAt = 0;
   configurePermissions(window.webContents.session);

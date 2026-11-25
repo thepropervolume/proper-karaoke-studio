@@ -1,7 +1,7 @@
-const { Menu } = require('electron');
+const { app, dialog, Menu } = require('electron');
 const { openDocumentationWindow } = require('./documentation-window.cjs');
 
-function createStudioMenu(window) {
+function createStudioMenu(window, icon) {
   const action = (id, label) => ({
     id, label, enabled: false,
     click: () => { if (!window.isDestroyed()) window.webContents.send('studio:menu-action', id); },
@@ -52,7 +52,18 @@ function createStudioMenu(window) {
       { id: 'documentation', label: 'Documentation', click: () => void openDocumentationWindow(window) },
       action('keybindings', 'Keyboard Shortcuts'),
       action('check-for-updates', 'Check for Updates'),
+      { id: 'whats-new', label: 'What’s New', click: () => void openDocumentationWindow(window, 'whats-new') },
+      { type: 'separator' },
     ] },
+      { id: 'about', label: 'About', click: () => {
+        if (window.isDestroyed()) return;
+        const product = 'The Proper Volume Karaoke Studio';
+        void dialog.showMessageBox(window, {
+          type: 'none', title: 'About ' + product, message: product,
+          detail: 'Version ' + app.getVersion() + '\n\n© The Proper Volume',
+          icon, buttons: ['OK'], defaultId: 0, cancelId: 0, noLink: true,
+        });
+      } },
   ]);
   Menu.setApplicationMenu(menu);
   const enable = (ids, value) => {
