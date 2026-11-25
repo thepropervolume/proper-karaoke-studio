@@ -48,8 +48,8 @@ function identifyStem(files, aliases, stage) {
 async function runAudioSeparator({ source, executable, model, modelDirectory, modelArgs, extra, backing, extensions }, outputDirectory, runTool) {
   const modelLocation = modelDirectory ? ['--model_file_dir', modelDirectory] : [];
   const ensembleArgs = extra.length ? ['--extra_models', ...extra, '--ensemble_algorithm', 'avg_wave'] : [];
-  const run = (input, primary, destination, args) => runTool(executable,
-    [input, '--model_filename', primary, '--output_dir', destination, ...modelLocation, ...args], 'Audio Separator');
+  const run = (input, primary, destination, args, message) => runTool(executable,
+    [input, '--model_filename', primary, '--output_dir', destination, ...modelLocation, ...args], 'Audio Separator', message);
   if (!backing) {
     await run(source, model, outputDirectory, [...modelArgs, ...ensembleArgs]);
     const files = await audioFiles(outputDirectory, extensions);
@@ -63,14 +63,14 @@ async function runAudioSeparator({ source, executable, model, modelDirectory, mo
     await fs.mkdir(first);
     await fs.mkdir(second);
     await run(source, model, first, [...modelArgs, ...ensembleArgs, '--output_format', 'WAV',
-      '--custom_output_names', JSON.stringify({ Vocals: 'Vocals', Instrumental: 'Instrumental' })]);
+      '--custom_output_names', JSON.stringify({ Vocals: 'Vocals', Instrumental: 'Instrumental' })], 'Separating the vocal and instrumental stems…');
     const firstPass = await audioFiles(first, extensions);
     const instrumental = identifyStem(firstPass, ['instrumental', 'no vocals', 'other'], 'The first pass');
     const vocals = identifyStem(firstPass, ['vocals', 'lead vocals', 'main vocals'], 'The first pass');
     await run(vocals, backing, second, ['--output_format', 'WAV', '--custom_output_names', JSON.stringify({
       Vocals: 'Lead Vocals', 'Lead Vocals': 'Lead Vocals', 'Main Vocals': 'Lead Vocals',
       Instrumental: 'Backing Vocals', 'Backing Vocals': 'Backing Vocals', 'Background Vocals': 'Backing Vocals',
-    })]);
+    })], 'Splitting lead and backing vocals…');
     const split = await audioFiles(second, extensions);
     const lead = identifyStem(split, ['lead vocals', 'main vocals', 'vocals'], 'The vocal split');
     const background = identifyStem(split, ['backing vocals', 'background vocals', 'instrumental'], 'The vocal split');

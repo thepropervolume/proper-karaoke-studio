@@ -20,6 +20,7 @@ import { WaveformTimeline } from './WaveformTimeline';
 import { StudioIcon, type StudioIconName } from './StudioIcon';
 import { WorkspaceSeparator, defaultInspectorWidth, inspectorMax, minInspectorWidth } from './WorkspaceSeparator';
 import { VoiceRecorder } from './VoiceRecorder';
+import { StemSeparationProgress } from './StemSeparationProgress';
 import { PreferencesDialog, preferenceError, type StudioPreferenceSection } from './PreferencesDialog';
 import { StudioUpdateNotice, useStudioUpdates } from './StudioUpdates';
 import { useStudioShortcuts } from './useStudioShortcuts';
@@ -113,6 +114,9 @@ export function App() {
   const linesRef = useRef<LyricLine[]>([]);
   const canvas = useRef<HTMLCanvasElement | null>(null), stemRef = useRef<StudioStem[]>([]);
   const [stems, setStems] = useState<StudioStem[]>([]);
+  const separationJob = useRef('');
+  const [separationProgress, setSeparationProgress] = useState<(StudioSeparationProgress & { started: number }) | null>(null);
+  const [separationResult, setSeparationResult] = useState<{ files: string[]; roles?: Record<string, StudioRole>; outputDirectory: string } | null>(null);
   const [workspace, setWorkspace] = useState<Workspace>('audio');
   const [appearance, setAppearance] = useState(readAppearance);
   const [storedInspectorWidth, setInspectorWidth] = useState(readInspectorWidth);
@@ -223,7 +227,10 @@ export function App() {
     };
   }, []);
 
-  useEffect(() => { stemRef.current = stems; }, [stems]);
+  useEffect(() => window.studio.onSeparationProgress(progress => {
+    if (separationJob.current !== progress.job) return;
+    setSeparationProgress(current => current ? { ...progress, started: current.started } : current);
+  }), []);
   useEffect(() => { linesRef.current = lines; }, [lines]);
   useLayoutEffect(() => {
     const inspector = inspectorRef.current;
@@ -273,13 +280,15 @@ export function App() {
     return () => observer.disconnect();
   }, [renderTiming, position, previewFont, lyricStyle, fontReady]);
 
-  const loadStems = useCallback(async (next: StudioStem[], projectDuration?: number) => {
+  const loadStems = useCallback(async (next: StudioStem[], projectDuration?: number, preservePosition = false) => {
+    const previousPosition = preservePosition ? player.current?.snapshot()?.position ?? 0 : 0;
     player.current?.stop();
     setWaveform(null);
     setPlaying(false); setError('');
+    stemRef.current = next;
     setStems(next);
     const songDuration = projectDuration ?? Math.max(0, ...next.map(item => item.durationSeconds));
-    setDuration(songDuration); setPosition(0);
+    setDuration(songDuration); setPosition(Math.min(songDuration, previousPosition));
     const inputs: KaraokeStemSource[] = next.flatMap((stem, index) =>
       stem.url ? [{ id: index + 1, role: stem.role, voice: stem.voice || stem.name, src: stem.url }] : []);
     setAlignmentStemId(current => next.some(stem => stem.id === current && stem.url)
@@ -297,6 +306,8 @@ export function App() {
         generation: id, stems: inputs, durationSeconds: songDuration, volume, outputId: '',
         mix: allAudible, stemVolumes: Object.fromEntries(inputs.map(input => [input.id, next[input.id - 1].volume])),
       });
+      if (generation.current !== id) return;
+      if (previousPosition > 0) await player.current?.seek(id, Math.min(songDuration, previousPosition));
       if (generation.current !== id) return;
       const reference = inputs.find(input => input.role === 'lead') ?? inputs[0];
       setWaveform(player.current?.waveform(id, reference.id) ?? null);
@@ -408,7 +419,7 @@ export function App() {
     })();
   }, [applyOpenedProject]);
 
-  const addLocalPaths = useCallback(async (paths: string[], roles?: Record<string, StudioRole>) => {
+  const addLocalPaths = useCallback(async (paths: string[], roles?: Record<string, StudioRole>, preservePosition = false) => {
     const additions: StudioStem[] = [];
     for (const path of paths) {
       try {
@@ -416,8 +427,9 @@ export function App() {
         additions.push({ id: crypto.randomUUID(), name: basename(path) || 'Audio stem', role: roles?.[path] ?? 'other', voice: '', path, url, durationSeconds, volume: 1 });
       } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     }
-    if (additions.length) await loadStems([...stems, ...additions]);
-  }, [loadStems, stems]);
+    if (additions.length) await loadStems([...stemRef.current, ...additions], undefined, preservePosition);
+    return additions.length;
+  }, [loadStems]);
 
   async function addVoiceRecording(path: string, role: StudioRole, voice: string) {
     try {
@@ -442,18 +454,19 @@ export function App() {
         });
       } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     }
-    if (additions.length) await loadStems([...stems, ...additions]);
+    if (additions.length) await loadStems([...stemRef.current, ...additions]);
   };
-  const updateStem = (id: string, patch: Partial<StudioStem>) => void loadStems(stems.map(stem => stem.id === id ? { ...stem, ...patch } : stem));
+  const updateStem = (id: string, patch: Partial<StudioStem>) => void loadStems(stemRef.current.map(stem => stem.id === id ? { ...stem, ...patch } : stem));
   const updateStemVolume = (id: string, value: number) => {
-    const next = stems.map(stem => stem.id === id ? { ...stem, volume: value } : stem);
+    const next = stemRef.current.map(stem => stem.id === id ? { ...stem, volume: value } : stem);
+    stemRef.current = next;
     setStems(next);
     if (generation.current) player.current?.setStemVolumes(generation.current, Object.fromEntries(next.map((stem, index) => [index + 1, stem.volume])));
   };
   const removeStem = (id: string) => {
-    const removed = stems.find(stem => stem.id === id);
+    const removed = stemRef.current.find(stem => stem.id === id);
     if (removed?.file) URL.revokeObjectURL(removed.url);
-    void loadStems(stems.filter(stem => stem.id !== id));
+    void loadStems(stemRef.current.filter(stem => stem.id !== id));
   };
   const togglePlay = async () => {
     const preview = player.current;
@@ -782,19 +795,49 @@ export function App() {
     finally { setBusy(false); }
   };
   const separate = async () => {
+    if (separationJob.current || busy || timing) return;
     const source = stems.find(stem => stem.path)?.path;
     if (!source) { setError('Import a local audio file before running stem separation.'); return; }
-    setBusy(true); setError('');
-    const cloud = !['audio-separator', 'demucs'].includes(settings.separatorAdapter);
-    setStatus(cloud ? 'Preparing cloud stem separation…' : 'Separating audio with the selected local models…');
+    const job = crypto.randomUUID();
+    separationJob.current = job;
+    setError('');
+    let ready = false;
     try {
-      const result = await window.studio.separate({ sourcePath: source });
+      let project: StudioProjectOrigin | undefined = openedProject ?? undefined;
+      if (!project || projectChanged || draftPending) {
+        if (!window.confirm('Save the project before separating stems? Studio will keep the results beside the project.')) return;
+        project = await saveProject();
+        if (!project) return;
+      }
+      setSeparationProgress({ job, message: 'Preparing stem separation…', started: Date.now() });
+      const result = await window.studio.separate({ job, sourcePath: source, project: { file: project.file, revision: project.revision } });
       if (!result.files.length) { setStatus('Stem separation canceled.'); return; }
-      await addLocalPaths(result.files, result.roles ?? Object.fromEntries(result.files.map(file => [file, separatedRole(file)])));
-      setStatus('Separated audio saved to ' + result.outputDirectory + '.');
+      ready = true;
+      setSeparationResult(result);
+      setSeparationProgress(current => current && { ...current, message: 'Stems ready. Waiting for playback or timing to finish…', progress: 1, remainingSeconds: undefined });
     } catch (cause) { setError(preferenceError(cause)); setStatus('Stem separation did not finish.'); }
-    finally { setBusy(false); }
+    finally {
+      if (!ready) {
+        separationJob.current = '';
+        setSeparationProgress(null);
+      }
+    }
   };
+  useEffect(() => {
+    if (!separationResult || busy || timing || playing || voiceRecorderOpen) return;
+    const result = separationResult;
+    setSeparationResult(null);
+    setSeparationProgress(current => current && { ...current, message: 'Adding the saved stems to this project…', progress: undefined, remainingSeconds: undefined });
+    const roles = result.roles ?? Object.fromEntries(result.files.map(file => [file, separatedRole(file)]));
+    void addLocalPaths(result.files, roles, true).then(imported => {
+      setStatus('Separated audio saved to ' + result.outputDirectory + '.');
+      if (imported !== result.files.length) setError('Some stems could not be added to the project. Import the saved audio from the output folder.');
+    })
+      .catch(cause => setError(preferenceError(cause))).finally(() => {
+        separationJob.current = '';
+        setSeparationProgress(null);
+      });
+  }, [separationResult, busy, timing, playing, voiceRecorderOpen, addLocalPaths]);
   const chooseBackground = async () => {
     const path = await window.studio.chooseImageFile();
     if (!path) return;
@@ -855,11 +898,13 @@ export function App() {
   }, [currentProject, openedProject, pendingLyrics, projectChanged, projectTransition]);
 
   const showRecovery = async () => {
+    if (separationJob.current) return;
     setRecoveryOpen(true);
     try { await refreshRecovery(); }
     catch (cause) { setRecoveryError(cause instanceof Error ? cause.message : String(cause)); }
   };
   const restoreRecovery = async (entry: StudioRecoveryEntry) => {
+    if (separationJob.current) return;
     if ((projectChanged || draftPending) && !window.confirm('Replace the current unsaved changes with this recovery draft?')) return;
     setBusy(true); setProjectTransition(true); setError('');
     try {
@@ -885,6 +930,7 @@ export function App() {
     finally { setBusy(false); }
   };
   const openProject = async () => {
+    if (separationJob.current) return;
     if ((projectChanged || draftPending) && !window.confirm('Open another project and discard unsaved changes?')) return;
     setBusy(true); setProjectTransition(true); setError('');
     try {
@@ -893,7 +939,8 @@ export function App() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); setProjectTransition(false); }
   };
-  const saveProject = async (saveAs = false) => {
+  const saveProject = async (saveAs = false): Promise<StudioProjectOrigin | undefined> => {
+    if (saveAs && separationJob.current) return;
     if (draftPending) { setError('Build cues from the new lyric text before saving the project.'); return; }
     setBusy(true); setError('');
     try {
@@ -901,6 +948,7 @@ export function App() {
       if (!saved) return;
       setOpenedProject({ file: saved.file, revision: saved.revision, snapshot: JSON.stringify(saved.project) });
       setStatus('Saved ' + basename(saved.file) + '.');
+      return { file: saved.file, revision: saved.revision };
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
   };
@@ -995,8 +1043,8 @@ export function App() {
   useEffect(() => window.studio.onMenuAction(action => menuAction.current(action)), []);
   useEffect(() => {
     void window.studio.updateMenu({ editing: menuEnabled, help: helpEnabled, stems: hasStems, lyrics: hasLyrics, cdg: hasCdg, styling: canStyle,
-      theme: appearance.theme, accent: appearance.accent }).catch(() => { /* Toolbar actions remain available. */ });
-  }, [menuEnabled, helpEnabled, hasStems, hasLyrics, hasCdg, canStyle, appearance.theme, appearance.accent]);
+      projectSwitch: !separationProgress, theme: appearance.theme, accent: appearance.accent }).catch(() => { /* Toolbar actions remain available. */ });
+  }, [menuEnabled, helpEnabled, hasStems, hasLyrics, hasCdg, canStyle, separationProgress, appearance.theme, appearance.accent]);
   const handleShortcut = useRef<(event: KeyboardEvent) => void>(() => {});
   handleShortcut.current = event => {
     if (editorInert || busy) return;
@@ -1056,6 +1104,7 @@ export function App() {
   const projectTitle = title.trim() || 'Untitled Project';
   const fileName = openedProject ? basename(openedProject.file) : undefined;
   const projectActionsDisabled = busy || timing;
+  const projectSwitchDisabled = projectActionsDisabled || Boolean(separationProgress);
 
   return <div className="app-shell" data-theme={appearance.theme} data-accent={appearance.accent}
     style={{ '--inspector-width': inspectorWidth + 'px' } as CSSProperties}>
@@ -1081,9 +1130,9 @@ export function App() {
         <span>{playing ? 'Playing' : busy ? 'Working…' : projectChanged || draftPending ? 'Unsaved changes' : fileName ? 'Saved' : 'Ready'}</span>
       </div>
       <div className="topbar-actions">
-        <IconButton icon="folder" label="Open Project" hint={shortcutHint('Open Project', 'open')} disabled={projectActionsDisabled} onClick={() => void openProject()} />
+        <IconButton icon="folder" label="Open Project" hint={shortcutHint('Open Project', 'open')} disabled={projectSwitchDisabled} onClick={() => void openProject()} />
         <IconButton icon="save" label="Save Project" hint={shortcutHint('Save Project', 'save')} disabled={projectActionsDisabled} onClick={() => void saveProject()} />
-        {openedProject && <IconButton icon="copy" label="Save As" hint={shortcutHint('Save As', 'save-as')} disabled={projectActionsDisabled} onClick={() => void saveProject(true)} />}
+        {openedProject && <IconButton icon="copy" label="Save As" hint={shortcutHint('Save As', 'save-as')} disabled={projectSwitchDisabled} onClick={() => void saveProject(true)} />}
         <span className="toolbar-divider" aria-hidden="true" />
         <IconButton icon="palette" label="Appearance" className="accent-button" onClick={() => setAppearanceOpen(true)} />
         <IconButton icon="settings" label="Preferences" hint={shortcutHint('Preferences', 'preferences')} onClick={() => openPreferences()} />
@@ -1100,7 +1149,7 @@ export function App() {
         </button>)}
         <div className="sidebar-project">
           <div className="eyebrow">Project</div>
-          <button type="button" className="nav-item" disabled={projectActionsDisabled} onClick={() => void showRecovery()}>
+          <button type="button" className="nav-item" disabled={projectSwitchDisabled} onClick={() => void showRecovery()}>
             <StudioIcon name="history" /><span>Recovery</span>
             {recoveryEntries.length > 0 && <span className="nav-count">{recoveryEntries.length}</span>}
           </button>
@@ -1189,8 +1238,7 @@ export function App() {
             </article>)}
           </div>
           <div className="inspector-section">
-            <button type="button" disabled={!stems.length || busy} data-tip="Use the separator and models selected in Preferences." onClick={() => void separate()}>Separate a Source Track…</button>
-            <p className="muted">Model and separator are set in Preferences.</p>
+            <button type="button" disabled={!stems.some(stem => stem.path) || busy || timing || !!separationProgress} data-tip="Save separated audio beside this project using the model selected in Preferences." onClick={() => void separate()}>Separate a Source Track…</button>
           </div>
         </>}
 
@@ -1366,6 +1414,7 @@ export function App() {
       </aside>
 
       <section className="transport" aria-label="Playback and timeline">
+        {separationProgress && <StemSeparationProgress job={separationProgress} />}
         {waveform && <WaveformTimeline overview={waveform} duration={previewDuration} position={position} lines={lines}
           disabled={busy || timing} seek={seek} moveCue={moveCue} onCueSelection={revealTimelineCue} appearance={appearance.theme + ':' + appearance.accent} />}
         {timingSession && <div className="capture-bar row">

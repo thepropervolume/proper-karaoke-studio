@@ -29,6 +29,7 @@ const { cloudSeparators } = require('./cloud-separators.cjs');
 const { createDesktopUpdater } = require('@thepropervolume/karaoke-core/desktop-updates');
 const { createStudioUpdates } = require('./studio-updates.cjs');
 const { VIDEO_LOGO_EXTENSIONS, VIDEO_ANIMATION_EXTENSIONS } = require('../domain/video-presentation.ts');
+const { projectStemDirectory } = require('./stem-separation.cjs');
 
 // Files are served to the renderer through random one-session URLs, never file:// URLs.
 protocol.registerSchemesAsPrivileged([{
@@ -484,6 +485,11 @@ app.whenReady().then(() => {
   let separationBusy = false;
   handleEditor('studio:separate', trackProjectOperation(async (event, input) => {
     if (separationBusy) throw new Error('Stem separation is already running.');
+    const job = text(input?.job, 'stem separation job', 36);
+    if (!/^[a-f0-9-]{36}$/.test(job)) throw new Error('Could not identify this stem separation job.');
+    const onProgress = progress => {
+      if (isEditorFrame(event)) event.sender.send('studio:separation-progress', { job, ...progress });
+    };
     separationBusy = true;
     try {
       const settings = preferences.get();
@@ -492,16 +498,14 @@ app.whenReady().then(() => {
       const credentials = cloud ? await integrationCredentials(adapter) : null;
       const source = await localFile(input?.sourcePath, adapter === 'dango' ? new Set(['.wav', '.mp3', '.flac']) : AUDIO_EXTENSIONS);
       const canceled = { files: [], outputDirectory: '' };
-      const destination = await dialog.showOpenDialog(mainWindow, {
-        title: 'Choose a Folder for Separated Stems', properties: ['openDirectory', 'createDirectory'],
-      });
-      const outputDirectory = destination.filePaths[0];
-      if (destination.canceled || !outputDirectory || !isEditorFrame(event)) return canceled;
+      const outputDirectory = await projectStemDirectory(input?.project, source);
+      if (!isEditorFrame(event)) return canceled;
       if (!cloud) {
+        onProgress({ message: 'Preparing the separation model…' });
         const ensembleModels = adapter === 'audio-separator' ? settings.ensembleModels : [];
         const backingModel = adapter === 'audio-separator' ? settings.backingModel : '';
         const modelDirectory = await models.prepare([model, ...ensembleModels, ...(backingModel ? [backingModel] : [])], settings.uvrModelsPath, adapter);
-        return await separate({ sourcePath: source, adapter, executable, model, modelDirectory, ensembleModels, backingModel }, outputDirectory);
+        return await separate({ sourcePath: source, adapter, executable, model, modelDirectory, ensembleModels, backingModel }, outputDirectory, onProgress);
       }
 
       const serviceName = adapter === 'dango' ? 'Dango AI' : cloudSeparators[adapter].name;
@@ -511,7 +515,7 @@ app.whenReady().then(() => {
         detail: serviceName + ' processes the selected audio online. This job may use credits or incur a charge on your account.',
       });
       if (response !== 1 || !isEditorFrame(event)) return canceled;
-      const options = { credentials, sourcePath: source, outputDirectory, model };
+      const options = { credentials, sourcePath: source, outputDirectory, model, onProgress };
       return adapter === 'dango'
         ? await separateWithDango({ ...options, modelOptions: model === '31' ? { separateBackingVocals: true } : {} })
         : await cloudSeparators[adapter].separate(options);

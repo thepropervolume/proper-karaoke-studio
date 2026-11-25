@@ -86,5 +86,10 @@ contextBridge.exposeInMainWorld('studio', {
   exportKit: input => ipcRenderer.invoke('studio:export-kit', input),
   exportVideo: input => ipcRenderer.invoke('studio:export-video', input),
   separate: input => ipcRenderer.invoke('studio:separate', input),
+  onSeparationProgress: listener => {
+    const onProgress = (_event, progress) => listener(progress);
+    ipcRenderer.on('studio:separation-progress', onProgress);
+    return () => ipcRenderer.removeListener('studio:separation-progress', onProgress);
+  },
   alignLyrics: input => ipcRenderer.invoke('studio:align-lyrics', input),
 });

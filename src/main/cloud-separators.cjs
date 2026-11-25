@@ -145,7 +145,7 @@ function createSeparator({ id, name, submit, stems, verify }) {
     name, models, defaultModel,
     normalizeKey: key => normalizeKey(key, name),
     verify: (key, { fetchImpl = fetch } = {}) => verify(normalizeKey(key, name), fetchImpl),
-    async separate({ credentials, sourcePath, outputDirectory: parent, model = defaultModel, signal },
+    async separate({ credentials, sourcePath, outputDirectory: parent, model = defaultModel, signal, onProgress },
       { fetchImpl = fetch, delay = wait } = {}) {
       const key = normalizeKey(credentials, name);
       const selected = String(model);
@@ -159,15 +159,18 @@ function createSeparator({ id, name, submit, stems, verify }) {
       let submitted = false;
       let succeeded = false;
       try {
+        onProgress?.({ message: 'Uploading audio to ' + name + '…' });
         const { id: reference, result } = await submit({
           key, source, model: selected, signal, fetchImpl, delay,
           starting: () => {
             if (signal?.aborted) throw new Error(label + ' was canceled before submission.');
             submitted = true;
           },
-          identify: id => { jobId = id; },
+          identify: id => { jobId = id; onProgress?.({ message: 'Waiting for ' + name + ' to separate the audio…' }); },
         });
-        for (const [stem, url] of stems(result, selected)) {
+        const downloads = stems(result, selected);
+        for (const [index, [stem, url]] of downloads.entries()) {
+          onProgress?.({ message: 'Downloading stems from ' + name + '…', progress: index / downloads.length });
           const file = join(outputDirectory, stem + '.wav');
           files.push(file);
           await saveWav(fetchImpl, url, file, name + ' stem download', signal);

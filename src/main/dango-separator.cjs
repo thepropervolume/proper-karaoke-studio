@@ -226,7 +226,7 @@ async function downloadStem(fetchImpl, remoteUrl, file, format, signal) {
 }
 
 /** Call only after the user confirms uploading this file and spending their Dango credits. */
-async function separateWithDango({ credentials, sourcePath, outputDirectory: parent, model = '29', modelOptions = {}, signal },
+async function separateWithDango({ credentials, sourcePath, outputDirectory: parent, model = '29', modelOptions = {}, signal, onProgress },
   { fetchImpl = fetch, now = Date.now, delay = waitFor } = {}) {
   const api = apiClient(credentials, fetchImpl, now);
   const style = String(model);
@@ -242,6 +242,7 @@ async function separateWithDango({ credentials, sourcePath, outputDirectory: par
   let complete = false;
   let outputs = [];
   try {
+    onProgress?.({ message: 'Uploading audio to Dango AI…' });
     const filename = 'song' + extension;
     const channel = await api('/vocal-remover/upload/channel', {
       data: {
@@ -257,6 +258,7 @@ async function separateWithDango({ credentials, sourcePath, outputDirectory: par
     if (signal?.aborted) throw new Error('Dango separation was canceled before submission.');
     submitted = true;
     jobId = jobIdentifier(await api('/vocal-remover/upload/' + channelId + '/result', { label: 'Dango submission', signal }));
+    onProgress?.({ message: 'Waiting for Dango AI to separate the audio…' });
     const status = await waitForJob(api, jobId, signal, delay);
     const lossless = extension !== '.mp3' && status.lossless === true;
     if (options.format === 'flac' && !lossless) throw new Error('Dango reports MP3-only results. Download the MP3 stems from your Dango jobs.');
@@ -264,7 +266,8 @@ async function separateWithDango({ credentials, sourcePath, outputDirectory: par
     const stems = [['instrumental', 'Instrumental'], ['vocals', 'Vocals']];
     if (options.separateBackingVocals) stems.push(['backVocals', 'Backing Vocals']);
     outputs = stems.map(([item, name]) => ({ item, file: join(outputDirectory, name + '.' + format) }));
-    for (const { item, file } of outputs) {
+    for (const [index, { item, file }] of outputs.entries()) {
+      onProgress?.({ message: 'Downloading stems from Dango AI…', progress: index / outputs.length });
       const result = await api('/vocal-remover/' + jobId + '/download/' + options.modelType + '/' + format + '/' + item,
         { label: 'Dango download setup', signal });
       await downloadStem(fetchImpl, result?.url, file, format, signal);

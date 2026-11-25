@@ -52,10 +52,9 @@ function createStudioMenu(window, icon) {
     { label: 'Help', role: 'help', submenu: [
       { id: 'documentation', label: 'Documentation', click: () => void openDocumentationWindow(window) },
       action('keybindings', 'Keyboard Shortcuts'),
-      action('check-for-updates', 'Check for Updates'),
       { id: 'whats-new', label: 'What’s New', click: () => void openDocumentationWindow(window, 'whats-new') },
       { type: 'separator' },
-    ] },
+      action('check-for-updates', 'Check for Updates'),
       { id: 'about', label: 'About', click: () => {
         if (window.isDestroyed()) return;
         const product = 'The Proper Volume Karaoke Studio';
@@ -65,6 +64,7 @@ function createStudioMenu(window, icon) {
           icon, buttons: ['OK'], defaultId: 0, cancelId: 0, noLink: true,
         });
       } },
+    ] },
   ]);
   Menu.setApplicationMenu(menu);
   const enable = (ids, value) => {
@@ -73,7 +73,8 @@ function createStudioMenu(window, icon) {
   return (state = {}) => {
     const editing = state.editing === true;
     const stems = editing && state.stems === true, lyrics = editing && state.lyrics === true, cdg = editing && state.cdg === true;
-    enable(['open', 'save', 'save-as', 'preferences', 'appearance', 'theme-day', 'theme-night', 'accent-blue', 'accent-pink', 'accent-purple'], editing);
+    enable(['open', 'save-as'], editing && state.projectSwitch !== false);
+    enable(['save', 'preferences', 'appearance', 'theme-day', 'theme-night', 'accent-blue', 'accent-pink', 'accent-purple'], editing);
     enable(['keybindings', 'check-for-updates'], state.help === true);
     enable(['export'], stems || lyrics || cdg);
     enable(['export-mp4', 'export-kit'], stems);

@@ -30,7 +30,7 @@ declare global {
     | 'theme-day' | 'theme-night' | 'accent-blue' | 'accent-pink' | 'accent-purple'
     | 'export-mp4' | 'export-kit' | 'export-cdg' | 'export-cdg-original' | 'export-lrc' | 'export-srt' | 'export-json';
   type StudioMenuState = {
-    editing: boolean; help: boolean; stems: boolean; lyrics: boolean; cdg: boolean; styling: boolean;
+    editing: boolean; help: boolean; projectSwitch: boolean; stems: boolean; lyrics: boolean; cdg: boolean; styling: boolean;
     theme: 'day' | 'night'; accent: 'blue' | 'pink' | 'purple';
   };
   type StudioUpdateStatus = {
@@ -109,9 +109,11 @@ declare global {
     timingContextMenu(context: 'field' | 'field-with-split' | 'line'): Promise<'playhead' | 'split-words' | null>;
     exportKit(input: { name: string; manifest: string; lyrics: Record<string, string>; stems: ExportStem[]; cdgPath?: string | null; backgroundPath?: string | null; customFontPath?: string; videoPresentation?: VideoPresentation }): Promise<string | null>;
     exportVideo(input: { name: string; duration: number; artist: string; title: string; ffmpegPath: string; backgroundPath?: string | null; backgroundLoop?: boolean; backgroundColor?: string; stems: ExportStem[]; ass: string; cdgPath?: string | null; customFontPath?: string; videoPresentation?: VideoPresentation; lyrics?: LyricLine[]; lyricStyle?: LyricStyle }): Promise<string | null>;
-    separate(input: { sourcePath: string }): Promise<{ files: string[]; outputDirectory: string; roles?: Record<string, StudioRole> }>;
+    separate(input: { job: string; sourcePath: string; project: StudioProjectOrigin }): Promise<{ files: string[]; outputDirectory: string; roles?: Record<string, StudioRole> }>;
+    onSeparationProgress(listener: (value: StudioSeparationProgress) => void): () => void;
     alignLyrics(input: { audioPath: string; language: string; lyrics: string[] }): Promise<{ duration: number; words: { word: string; start: number; end: number; confidence?: number }[]; reviewLineIndexes?: number[] } | null>;
   };
+  type StudioSeparationProgress = { job: string; message: string; progress?: number; remainingSeconds?: number };
   type StudioShortcutState = { value: StudioShortcuts; warning: string };
   type StudioConfigurationFile = 'settings' | 'shortcuts';
   interface Window { studio: StudioBridge; }

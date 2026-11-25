@@ -21,6 +21,7 @@ const { alignCloudLyrics, vultrMaximumBytes } = require('./cloud-alignment.cjs')
 const { matchProviderWords } = require('../domain/forced-alignment.ts');
 const { localSeparatorArgs } = require('./separation-options.cjs');
 const { resolveSeparatorExecutable, normalizeEnsemble, runAudioSeparator } = require('./local-separator.cjs');
+const { stemToolProgress } = require('./stem-separation.cjs');
 const { DEFAULT_LYRIC_FORMAT_OPTIONS, normalizeLyricFormatOptions, validateLyricFormatOptions } = require('../domain/lyric-format.ts');
 
 const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.aiff', '.wma']);
@@ -147,8 +148,10 @@ function runTool(executable, args, label, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, { cwd: options.cwd, env: options.env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
-    const collectStderr = options.onStderr ?? (chunk => { stderr = (stderr + chunk).slice(-12000); });
-    child.stderr.setEncoding('utf8').on('data', collectStderr);
+    child.stderr.setEncoding('utf8').on('data', chunk => {
+      stderr = (stderr + chunk).slice(-12000);
+      options.onStderr?.(chunk);
+    });
     child.once('error', error => reject(new Error('Could not start ' + label + ' (' + error.message + '). Check its executable in Preferences.')));
     child.once('close', (code, signal) => resolve({ code, signal, stderr }));
   });
@@ -394,14 +397,12 @@ async function exportVideo(input, destination, overwrite = true) {
     filters.push('[songAudio]' + render.audio.map(label => '[' + label + ']').join('') + 'amix=inputs=' + (render.audio.length + 1) + ':normalize=0:duration=longest,alimiter=limit=0.95:latency=1[mix]');
     args.push('-filter_complex', filters.join(';'), '-map', '[' + render.video + ']', '-map', '[mix]', '-t', decimal(timeline.duration),
       '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k',
-      '-movflags', '+faststart', '-metadata', 'title=' + text(input.title, 'song title', 300),
-      '-metadata', 'artist=' + text(input.artist, 'song artist', 300), '-f', 'mp4');
-    const executable = /[\\/]/.test(ffmpeg) ? path.resolve(ffmpeg) : ffmpeg;
+      '-movflags', '+faststart', '-metadata', 'title=' + title,
+      '-metadata', 'artist=' + artist, '-f', 'mp4');
     return await writeOutput(destination, overwrite, temporaryFile => spawnTool(executable, [...args, temporaryFile], 'FFmpeg', { cwd: tempDir }));
   } finally { await removeExportScratch(tempDir); }
 }
 
-async function separate(input, directory) {
 async function probeVideoAnimation(source, executable) {
   const { code, stderr } = await runTool(executable, [
     '-hide_banner', '-nostdin', '-i', source, '-map', '0:v:0', '-c:v', 'copy', '-t', '0', '-f', 'null', '-',
@@ -413,6 +414,7 @@ async function probeVideoAnimation(source, executable) {
   return { duration, hasAudio: /Stream #[^\r\n]*\bAudio:/.test(stderr) };
 }
 
+async function separate(input, directory, onProgress) {
   const source = await localFile(input?.sourcePath, AUDIO_EXTENSIONS);
   const adapter = input.adapter ?? defaultSettings.separatorAdapter;
   if (adapter !== 'audio-separator' && adapter !== 'demucs') throw new Error('Choose Audio Separator or Demucs for local separation.');
@@ -423,27 +425,31 @@ async function probeVideoAnimation(source, executable) {
   const { extra, backing } = normalizeEnsemble(model, input.ensembleModels, input.backingModel);
   if (adapter === 'demucs' && (extra.length || backing)) throw new Error('Choose Audio Separator to use an ensemble or vocal splitter.');
   const outputDirectory = await fs.mkdtemp(path.join(directory, 'tpv-separated-'));
-  if (adapter === 'audio-separator') {
-    try {
+  const run = (file, args, label, message = 'Separating stems…') => {
+    onProgress?.({ message });
+    return spawnTool(file, args, label, onProgress ? { onStderr: stemToolProgress(onProgress, message) } : undefined);
+  };
+  try {
+    if (adapter === 'audio-separator') {
       return await runAudioSeparator({ source, executable, model, modelDirectory: input.modelDirectory, modelArgs, extra, backing, extensions: AUDIO_EXTENSIONS },
-        outputDirectory, spawnTool);
-    } catch (cause) {
-      // The directory was created for this attempt and has never been exposed to the caller.
-      await fs.rm(outputDirectory, { recursive: true, force: true });
-      throw cause;
+        outputDirectory, run);
     }
+    const repo = input.modelDirectory ? ['--repo', input.modelDirectory] : [];
+    await run(executable, ['--name', model, '--out', outputDirectory, ...repo, ...modelArgs, source], 'Demucs');
+    const stemDirectory = path.join(outputDirectory, model, path.parse(source).name);
+    const entries = await fs.readdir(stemDirectory, { withFileTypes: true }).catch(error => {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    });
+    const files = entries.filter(item => item.isFile() && AUDIO_EXTENSIONS.has(path.extname(item.name).toLowerCase()))
+      .map(item => path.join(stemDirectory, item.name)).sort();
+    if (!files.length) throw new Error('Separation completed but produced no supported audio files.');
+    return { files, outputDirectory };
+  } catch (cause) {
+    // Keep older takes and remove only the uncommitted directory for this attempt.
+    await removeExportScratch(outputDirectory);
+    throw cause;
   }
-  const repo = input.modelDirectory ? ['--repo', input.modelDirectory] : [];
-  await spawnTool(executable, ['--name', model, '--out', outputDirectory, ...repo, ...modelArgs, source], 'Demucs');
-  const stemDirectory = path.join(outputDirectory, model, path.parse(source).name);
-  const entries = await fs.readdir(stemDirectory, { withFileTypes: true }).catch(error => {
-    if (error.code === 'ENOENT') return [];
-    throw error;
-  });
-  const files = entries.filter(item => item.isFile() && AUDIO_EXTENSIONS.has(path.extname(item.name).toLowerCase()))
-    .map(item => path.join(stemDirectory, item.name)).sort();
-  if (!files.length) throw new Error('Separation completed but produced no supported audio files.');
-  return { files, outputDirectory };
 }
 
 async function prepareAlignmentInput(input, engine) {

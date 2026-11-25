@@ -395,6 +395,8 @@ a { color: var(--accent); }
 .transport-volume { display: flex; align-items: center; gap: 5px; padding-left: 6px; color: var(--muted); }
 .transport-volume input { width: clamp(63px, 8vw, 118px); }
 .transport-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 16px; }
+.stem-separation-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; font-size: 12px; }
+.stem-separation-progress progress { width: clamp(80px, 16vw, 240px); height: 9px; accent-color: var(--accent); }
 .status { color: var(--muted); font-size: 12px; }
 .error { color: var(--danger); white-space: pre-wrap; font-size: 12px; max-height: 52px; overflow: auto; margin: 0; }
 .capture-bar { background: var(--accent-soft); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-weight: 700; flex-wrap: wrap; }
