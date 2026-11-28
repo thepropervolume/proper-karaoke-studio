@@ -1,5 +1,9 @@
 # What’s New in Karaoke Studio
 
+## 0.12.3
+
+- Refresh the Studio splash with KaraStudio branding, the selected Signature Band design, and a licensing tooltip.
+
 ## 0.12.2
 
 - Start Studio with a Day or Night splash that follows the app’s appearance and links to The Proper Volume.
