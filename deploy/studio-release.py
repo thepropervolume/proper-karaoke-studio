@@ -41,6 +41,7 @@ DOWNLOAD_GROUPS = (
     ("Linux", ("linux-x64",)),
 )
 PREFIX = "tpv-karaoke-studio"
+SOURCE_REPOSITORY = "https://github.com/thepropervolume/proper-karaoke-studio"
 LIMIT = 450 * 1024 * 1024
 ROOT = Path("/srv/tpv-studio-releases")
 
@@ -210,13 +211,28 @@ def page(manifest, *, index=False, versions=(), older_assets=()):
       <ul class="files">
         <li><a href="{relative}SHA256SUMS.txt" download><strong>SHA-256 checksums</strong></a></li>
         <li><a href="{relative}release-manifest.json"><strong>Release manifest</strong></a></li>
-        <li><a href="https://github.com/thepropervolume/proper-karaoke-studio/tree/{source}"><strong>Corresponding source code</strong></a></li>
+        <li><a href="{SOURCE_REPOSITORY}/tree/{source}"><strong>Corresponding source code</strong></a></li>
       </ul>
     </section>
     {f'<section class="card platform-fallback"><h2>Latest builds for other platforms</h2><ul class="files">{older}</ul></section>' if older else ''}
     {f'<section class="card history"><h2>Earlier releases</h2><ul>{history}</ul></section>' if history else ''}
-    <footer class="release-footer">{footer}</footer>
+    <nav class="release-footer" aria-label="Studio download links">
+      {footer}
+      <a href="{SOURCE_REPOSITORY}">Karaoke Studio on GitHub</a>
+    </nav>
   </main>
+  <footer class="shell site-footer">
+    <nav class="social-nav" aria-label="The Proper Volume social accounts">
+      <a href="https://instagram.com/thepropervolume" target="_blank" rel="noopener noreferrer" aria-label="Instagram"><svg aria-hidden="true"><use href="/assets/social-icons.svg#instagram"></use></svg></a>
+      <a href="https://www.linkedin.com/company/thepropervolume/" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn"><svg aria-hidden="true"><use href="/assets/social-icons.svg#linkedin"></use></svg></a>
+      <a href="https://karaokenerds.com/Brand/TheProperVolume/Date" target="_blank" rel="noopener noreferrer" aria-label="Karaoke Nerds"><svg aria-hidden="true"><use href="/assets/social-icons.svg#karaokenerds"></use></svg></a>
+      <a href="https://twitch.tv/thepropervolume" target="_blank" rel="noopener noreferrer" aria-label="Twitch"><svg aria-hidden="true"><use href="/assets/social-icons.svg#twitch"></use></svg></a>
+      <a href="https://youtube.com/@thepropervolume" target="_blank" rel="noopener noreferrer" aria-label="YouTube"><svg aria-hidden="true"><use href="/assets/social-icons.svg#youtube"></use></svg></a>
+      <a href="https://open.spotify.com/artist/5QMHcgrYZEPcbHx75cF2my" target="_blank" rel="noopener noreferrer" aria-label="Spotify"><svg aria-hidden="true"><use href="/assets/social-icons.svg#spotify"></use></svg></a>
+      <a href="https://www.facebook.com/thepropervolume" target="_blank" rel="noopener noreferrer" aria-label="Facebook"><svg aria-hidden="true"><use href="/assets/social-icons.svg#facebook"></use></svg></a>
+      <a href="https://github.com/thepropervolume" target="_blank" rel="noopener noreferrer" aria-label="GitHub"><svg aria-hidden="true"><use href="/assets/social-icons.svg#github"></use></svg></a>
+    </nav>
+  </footer>
 </body>
 </html>
 """

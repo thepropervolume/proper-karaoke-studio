@@ -57,3 +57,5 @@ Publish a full release once all four platform pairs are staged. To publish the b
     node scripts/upload-studio-release.mjs publish-available
 
 Publication verifies the manifest's version, source commit, and package sizes. Repeat the check with `verify` for a full release or `verify-available` for a partial release. The server uses [deploy/studio-release.py](../deploy/studio-release.py) at `/opt/tpv-studio-releases/release-command.py`.
+
+Studio's download pages use the Booth release site's shared stylesheet and social icons. Deploy the updated shared assets to `/srv/tpv-downloads/public/assets/` before regenerating the Studio pages.

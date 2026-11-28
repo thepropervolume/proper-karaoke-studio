@@ -60,6 +60,12 @@ class PublishAvailableTest(unittest.TestCase):
             self.assertIn('href="release-manifest.json"', version_page)
             self.assertIn(f'/tree/{current}"', version_page)
             self.assertIn('href="../">Latest Studio release', version_page)
+            for rendered_page in (page, version_page):
+                self.assertIn('href="https://github.com/thepropervolume/proper-karaoke-studio">Karaoke Studio on GitHub', rendered_page)
+                self.assertIn('aria-label="The Proper Volume social accounts"', rendered_page)
+                self.assertIn('aria-label="YouTube"', rendered_page)
+                self.assertIn('/assets/social-icons.svg#youtube', rendered_page)
+                self.assertEqual(rendered_page.count('/assets/social-icons.svg#'), 8)
             with self.assertRaisesRegex(ValueError, "already exists"):
                 release.publish(root, "0.9.0", "c" * 40, allow_partial=True)
 
