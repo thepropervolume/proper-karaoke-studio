@@ -5,10 +5,10 @@ const maximumPaintWaitMs = 350;
 const minimumVisibleMs = 900;
 
 function createStartupSplash(url, icon) {
-  const { x, y, width: availableWidth, height: availableHeight } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
-  const width = Math.min(620, availableWidth), height = Math.min(360, availableHeight);
+  // Wayland leaves placement to the compositor and does not expose global cursor coordinates.
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   const window = new BrowserWindow({
-    width, height, x: x + Math.floor((availableWidth - width) / 2), y: y + Math.floor((availableHeight - height) / 2),
+    width: Math.min(620, width), height: Math.min(360, height), center: true,
     show: false, frame: false,
     skipTaskbar: true, resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
     backgroundColor: '#090e18', icon, title: 'Starting The Proper Volume Karaoke Studio',
