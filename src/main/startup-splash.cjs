@@ -67,6 +67,7 @@ function createStartupSplash(url, icon) {
   window.webContents.on('will-redirect', event => event.preventDefault());
   window.webContents.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown' && input.key === 'Escape') {
+      if (readingLicense) return;
       event.preventDefault();
       if (displayEditor) handoff();
       else close();
