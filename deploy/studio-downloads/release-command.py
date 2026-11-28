@@ -149,6 +149,7 @@ def page(manifest, *, index=False, versions=()):
     return f"""<!doctype html>
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Karaoke Studio {version} Downloads</title>
+<link rel="stylesheet" href="/assets/releases.css">
 <style>
   :root {{ color-scheme: light dark; font-family: system-ui, sans-serif; }}
   body {{ max-width: 46rem; padding: 2rem 1.25rem; margin: 5vh auto; line-height: 1.6; }}
@@ -162,7 +163,17 @@ def page(manifest, *, index=False, versions=()):
 <ul>{files}</ul>
 <p><a href="{relative}SHA256SUMS.txt" download>SHA-256 checksums</a> · <a href="{relative}release-manifest.json">Release manifest</a></p>
 {f'<h2>Earlier releases</h2><ul>{history}</ul>' if history else ''}
-<p>{footer} · <a href="/">All downloads</a></p>
+<p>{footer} · <a href="/">All downloads</a> · <a href="https://github.com/thepropervolume/proper-karaoke-studio" target="_blank" rel="noopener noreferrer">Karaoke Studio on GitHub</a></p>
+<footer class="site-footer"><nav class="social-nav" aria-label="The Proper Volume social accounts">
+  <a href="https://instagram.com/thepropervolume" target="_blank" rel="noopener noreferrer" aria-label="Instagram"><svg aria-hidden="true"><use href="/assets/social-icons.svg#instagram"></use></svg></a>
+  <a href="https://www.linkedin.com/company/thepropervolume/" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn"><svg aria-hidden="true"><use href="/assets/social-icons.svg#linkedin"></use></svg></a>
+  <a href="https://karaokenerds.com/Brand/TheProperVolume/Date" target="_blank" rel="noopener noreferrer" aria-label="Karaoke Nerds"><svg aria-hidden="true"><use href="/assets/social-icons.svg#karaokenerds"></use></svg></a>
+  <a href="https://twitch.tv/thepropervolume" target="_blank" rel="noopener noreferrer" aria-label="Twitch"><svg aria-hidden="true"><use href="/assets/social-icons.svg#twitch"></use></svg></a>
+  <a href="https://youtube.com/@thepropervolume" target="_blank" rel="noopener noreferrer" aria-label="YouTube"><svg aria-hidden="true"><use href="/assets/social-icons.svg#youtube"></use></svg></a>
+  <a href="https://open.spotify.com/artist/5QMHcgrYZEPcbHx75cF2my" target="_blank" rel="noopener noreferrer" aria-label="Spotify"><svg aria-hidden="true"><use href="/assets/social-icons.svg#spotify"></use></svg></a>
+  <a href="https://www.facebook.com/thepropervolume" target="_blank" rel="noopener noreferrer" aria-label="Facebook"><svg aria-hidden="true"><use href="/assets/social-icons.svg#facebook"></use></svg></a>
+  <a href="https://github.com/thepropervolume" target="_blank" rel="noopener noreferrer" aria-label="GitHub"><svg aria-hidden="true"><use href="/assets/social-icons.svg#github"></use></svg></a>
+</nav></footer>
 </html>
 """
 

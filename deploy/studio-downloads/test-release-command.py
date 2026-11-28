@@ -60,6 +60,10 @@ class ReleaseTest(unittest.TestCase):
                 self.assertEqual(hashlib.sha256((destination / asset["name"]).read_bytes()).hexdigest(), asset["sha256"])
             self.assertIn(f"/v{VERSION}/SHA256SUMS.txt", (public / ".latest.map").read_text())
             self.assertIn("Apple silicon", (public / "index.html").read_text())
+            page = (public / "index.html").read_text()
+            self.assertIn('https://github.com/thepropervolume/proper-karaoke-studio', page)
+            self.assertIn('aria-label="YouTube"', page)
+            self.assertIn('/assets/social-icons.svg#youtube', page)
             with self.assertRaisesRegex(ValueError, "already exists"):
                 publisher.publish(root, VERSION, "b" * 40)
 

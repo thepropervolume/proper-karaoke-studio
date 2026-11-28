@@ -22,3 +22,5 @@ The initial Windows-only 0.4.0 preview was published with the administrator-only
 Run the publisher regression test on Linux with:
 
     python3 deploy/studio-downloads/test-release-command.py -v
+
+Studio's page uses the shared release-site stylesheet and social-icon sprite. Install the corresponding Booth release-site assets under `/srv/tpv-downloads/public/assets/` before updating this renderer. The Studio page links to the Studio source repository and shares the TPV social navigation.
