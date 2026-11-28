@@ -1,5 +1,9 @@
 # What’s New in Karaoke Studio
 
+## 0.12.4
+
+- Refine the Signature Band splash and its accessible open-source license explanation.
+
 ## 0.12.3
 
 - Refresh the Studio splash with KaraStudio branding, the selected Signature Band design, and a licensing tooltip.
