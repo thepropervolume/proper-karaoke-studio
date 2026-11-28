@@ -1,5 +1,10 @@
 # What’s New in Karaoke Studio
 
+## 0.12.2
+
+- Start Studio with a Day or Night splash that follows the app’s appearance and links to The Proper Volume.
+- Show the Studio name and version separately in Windows Installed apps and preserve existing shortcuts when upgrading in place.
+
 ## 0.12.1
 
 - Export CD+G with clearer, bolder lyrics, safer margins for wide lines, and a magenta highlight sweep that keeps the letters intact.
