@@ -17,6 +17,7 @@ function createStartupSplash(url, icon) {
   let shownAt;
   let displayEditor;
   let handoffTimer;
+  let readingLicense = false;
 
   function close() {
     clearTimeout(handoffTimer);
@@ -33,6 +34,7 @@ function createStartupSplash(url, icon) {
 
   function scheduleHandoff() {
     clearTimeout(handoffTimer);
+    if (readingLicense && !window.isDestroyed()) return;
     let remaining = 0;
     if (!window.isDestroyed()) {
       // Let the splash finish its first paint if the editor loaded first.
@@ -69,6 +71,11 @@ function createStartupSplash(url, icon) {
       if (displayEditor) handoff();
       else close();
     }
+  });
+  window.on('page-title-updated', (event, title) => {
+    event.preventDefault();
+    readingLicense = title === 'Studio splash license active';
+    if (displayEditor) scheduleHandoff();
   });
   window.webContents.once('render-process-gone', () => {
     if (displayEditor) handoff();
