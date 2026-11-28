@@ -264,12 +264,27 @@ function createWindow({ checkForUpdates = false, startupSplash } = {}) {
   if (startupSplash) {
     const startupRendererExited = (_event, details) => showLoadError(details.reason);
     window.webContents.once('render-process-gone', startupRendererExited);
-    window.once('ready-to-show', () => startupSplash.editorReady(() => {
-      if (window.isDestroyed() || quitting) return;
-      window.webContents.removeListener('render-process-gone', startupRendererExited);
-      window.show();
-    }));
-    window.once('closed', startupSplash.close);
+    let editorReady = false;
+    let paintFallback;
+    const revealEditor = () => {
+      clearTimeout(paintFallback);
+      if (editorReady || window.isDestroyed()) return;
+      editorReady = true;
+      startupSplash.editorReady(() => {
+        if (window.isDestroyed() || quitting) return;
+        window.webContents.removeListener('render-process-gone', startupRendererExited);
+        window.show();
+      });
+    };
+    window.once('ready-to-show', revealEditor);
+    window.webContents.once('did-finish-load', () => {
+      // Some Wayland compositors wait for a visible window before painting it.
+      if (!editorReady) paintFallback = setTimeout(revealEditor, 200);
+    });
+    window.once('closed', () => {
+      clearTimeout(paintFallback);
+      startupSplash.close();
+    });
   }
   updateStudioMenu = createStudioMenu(window, brandIcon());
   bindStudioShortcuts(window);
