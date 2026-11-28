@@ -8,7 +8,7 @@ Studio preview installers are served from [the Studio download page](https://rel
 - On Linux x64, install the Debian package on a compatible system or make the AppImage executable and launch it.
 - On macOS, choose Apple silicon for an M-series Mac or Intel for an Intel Mac. Open the DMG and move the app into Applications. Studio previews are currently unsigned for distribution.
 
-The Windows installer registers `tpv-karaoke-studio` on PATH for the selected installation scope. Open a new terminal after setup. The Debian package adds the command under `/usr/bin`. Portable and drag-and-drop builds can run the CLI from the application folder. See the [CLI guide](cli.md).
+The Windows installer registers `tpv-karaoke-studio` on PATH for the selected installation scope. Open a new terminal after setup. Windows lists the Studio name and version separately. Upgrades in the same installation folder and scope preserve the existing shortcut identity used for Start and taskbar pins. The Debian package adds the command under `/usr/bin`. Portable and drag-and-drop builds can run the CLI from the application folder. See the [CLI guide](cli.md).
 
 Keep project media beside your editable project or back it up in a TPV kit before switching machines. On supported platforms, Studio sets up its AI Sync runtime on demand. Local stem separation and video export use separately installed tools.
 
@@ -37,7 +37,7 @@ Run `npm ci` and `npm test` in the Studio checkout, then build the platform's pa
 | macOS Apple Silicon | `npm run package:mac -- --arm64 --publish never` | DMG and ZIP |
 | macOS Intel | `npm run package:mac -- --x64 --publish never` | DMG and ZIP |
 
-Run `./scripts/windows/test-installer.ps1` in a clean, elevated Windows VM after the build to check the CLI installation and PATH restoration. Windows and macOS previews ship unsigned.
+Run `./scripts/windows/test-installer.ps1` in a clean, elevated Windows VM after the build to check the Installed apps entry, shortcut identity, CLI installation, and PATH restoration. Pass `-PreviousInstaller <older-setup.exe>` to test a cross-version upgrade. Windows and macOS previews ship unsigned.
 
 ## Publish
 

@@ -1,4 +1,7 @@
-param([string]$OutputDirectory = "release")
+param(
+    [string]$OutputDirectory = "release",
+    [string]$PreviousInstaller
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -33,10 +36,37 @@ function Assert-StudioPath([string]$Scope, [hashtable]$Expected) {
     }
 }
 
+function Assert-StudioStartShortcut([string]$Scope, [string]$ApplicationFolder) {
+    $programsFolder = if ($Scope -eq 'Machine') { 'CommonPrograms' } else { 'Programs' }
+    $startMenu = $shell.NameSpace([Environment]::GetFolderPath($programsFolder))
+    $shortcut = $startMenu.ParseName("$($package.build.productName).lnk")
+    $target = Join-Path $ApplicationFolder "$($package.build.productName).exe"
+    if ($null -eq $shortcut -or
+        $shortcut.ExtendedProperty('System.AppUserModel.ID') -cne $package.build.appId -or
+        $shortcut.ExtendedProperty('System.Link.TargetParsingPath') -ne $target) {
+        throw "The $Scope Start shortcut does not match the installed executable or its pin identity."
+    }
+}
+
+function Assert-StudioInstalledApp([string]$Scope) {
+    $key = Get-StudioRegistryKey $Scope $uninstallIdentity
+    if ($null -eq $key) { throw "Studio is missing its $Scope Installed apps entry." }
+    try {
+        if ($key.GetValue('DisplayName') -cne $package.build.productName -or
+            $key.GetValue('DisplayVersion') -cne $package.version) {
+            throw "The $Scope Installed apps entry must list the product name and version separately."
+        }
+    }
+    finally { $key.Dispose() }
+}
+
 $package = Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json
 $installer = (Resolve-Path -LiteralPath (Join-Path $OutputDirectory "$($package.build.productName) Setup $($package.version).exe")).Path
+$firstInstaller = if ($PreviousInstaller) { (Resolve-Path -LiteralPath $PreviousInstaller).Path } else { $installer }
 $uninstallerName = "Uninstall $($package.build.productName).exe"
-$identity = 'Software\321faa76-60f3-5c20-8c07-0637c3638748'
+$installerGuid = '321faa76-60f3-5c20-8c07-0637c3638748'
+$identity = "Software\$installerGuid"
+$uninstallIdentity = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$installerGuid"
 foreach ($scope in 'User', 'Machine') {
     $previousInstallation = Get-StudioRegistryKey $scope $identity
     if ($null -ne $previousInstallation) {
@@ -53,6 +83,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 
 $before = @{ User = Get-StudioPathValue User; Machine = Get-StudioPathValue Machine }
 $root = [IO.Directory]::CreateTempSubdirectory('tpv-studio-installer-smoke-').FullName
+$shell = New-Object -ComObject Shell.Application
 foreach ($scope in 'User', 'Machine') {
     $app = [IO.Path]::GetFullPath((Join-Path $root "Studio $scope"))
     if (-not $app.StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
@@ -63,6 +94,8 @@ foreach ($scope in 'User', 'Machine') {
     $cliDirectory = Join-Path $app 'cli'
     $uninstaller = Join-Path $app $uninstallerName
     $updateMarker = Join-Path $app 'resources/tpv-studio-install-kind'
+    $desktop = if ($scope -eq 'Machine') { 'CommonDesktopDirectory' } else { 'DesktopDirectory' }
+    $desktopShortcut = Join-Path ([Environment]::GetFolderPath($desktop)) "$($package.build.productName).lnk"
     $expectedValue = if ([String]::IsNullOrEmpty($before[$scope].Value)) {
         $cliDirectory
     } else {
@@ -73,7 +106,17 @@ foreach ($scope in 'User', 'Machine') {
     try {
         # NSIS requires /D to be the last argument and to be passed without quotes.
         $installArguments = "/S $flag /D=$app"
+        Invoke-StudioInstaller $firstInstaller $installArguments
+        Assert-StudioPath $scope $expected
+        Assert-StudioStartShortcut $scope $app
+
+        # Delete the test shortcut to make a remove-and-recreate upgrade observable.
+        if (-not (Test-Path -LiteralPath $desktopShortcut)) { throw 'The initial install did not create the test Desktop shortcut.' }
+        Remove-Item -LiteralPath $desktopShortcut
         Invoke-StudioInstaller $installer $installArguments
+        if (Test-Path -LiteralPath $desktopShortcut) { throw 'The upgrade recreated a deleted Desktop shortcut.' }
+        Assert-StudioStartShortcut $scope $app
+        Assert-StudioInstalledApp $scope
         Assert-StudioPath $scope $expected
         Assert-StudioPath $other $before[$other]
         if ((Get-Content -LiteralPath $updateMarker -Raw) -cne 'nsis') {
@@ -94,11 +137,6 @@ foreach ($scope in 'User', 'Machine') {
             if ($LASTEXITCODE -ne 0) { throw 'The installed Studio CLI could not load project commands.' }
         }
         finally { $env:Path = $sessionPath }
-
-        # Reinstallation exercises the upgrade path and must leave exactly one entry.
-        Invoke-StudioInstaller $installer $installArguments
-        Assert-StudioPath $scope $expected
-        Assert-StudioPath $other $before[$other]
     }
     finally {
         if (Test-Path -LiteralPath $uninstaller) {
@@ -107,7 +145,7 @@ foreach ($scope in 'User', 'Machine') {
     }
     Assert-StudioPath $scope $before[$scope]
     Assert-StudioPath $other $before[$other]
-    Write-Output "$scope Studio installation, CLI launch, upgrade, and PATH restoration passed."
+    Write-Output "$scope Studio Installed apps entry, shortcut identity, CLI launch, upgrade, and PATH restoration passed."
 }
 
 [IO.Directory]::Delete($root, $false)

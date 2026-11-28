@@ -79,6 +79,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
+      "uninstallDisplayName": "${productName}",
       "include": "scripts/windows/installer.nsh",
       "installerIcon": "assets/branding/app.ico",
       "uninstallerIcon": "assets/branding/app.ico",

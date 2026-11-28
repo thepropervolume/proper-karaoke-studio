@@ -1,3 +1,14 @@
+!macro customHeader
+  !ifndef BUILD_UNINSTALLER
+    ; electron-builder has already added the directory page at this point.
+    ; Let its upgrade logic preserve shortcuts when the registered installation
+    ; exists in the selected directory, including when setup was opened manually.
+    !ifdef allowToChangeInstallationDirectory
+      !undef allowToChangeInstallationDirectory
+    !endif
+  !endif
+!macroend
+
 !macro UpdateStudioCliPath operation
   InitPluginsDir
   File /oname=$PLUGINSDIR\studio-path.exe "${PROJECT_DIR}\dist-electron\windows-cli\studio-path.exe"
