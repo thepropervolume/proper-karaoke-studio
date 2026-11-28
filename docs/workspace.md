@@ -1,5 +1,7 @@
 # Studio workspace
 
+The startup screen matches Studio’s saved Day or Night appearance. Select **thepropervolume.com** to open the website in your browser. Press **Esc** to dismiss the screen while the editor opens.
+
 Studio uses Booth’s navigation rail, application mark, appearance colors, and playback controls. The singer preview stays in the center while the right panel changes between **Audio Stems**, **Lyrics**, and **Export**. The bottom transport keeps playback position, volume, and the waveform in the same place.
 
 - Import or record audio in **Audio Stems**. Change a stem’s role, voice label, and volume in its card.

@@ -9,6 +9,6 @@ export default defineConfig({
   base: './',
   build: {
     outDir: 'dist', emptyOutDir: true,
-    rolldownOptions: { input: { studio: 'index.html', documentation: 'src/help/index.html' } },
+    rolldownOptions: { input: { studio: 'index.html', documentation: 'src/help/index.html', splash: 'src/splash/index.html' } },
   },
 });

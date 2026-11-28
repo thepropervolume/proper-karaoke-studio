@@ -18,6 +18,7 @@ const { createIntegrationCatalog } = require('./integration-catalog.cjs');
 const { createIntegrationSecrets } = require('./integration-secrets.cjs');
 const { checkDangoConnection, normalizeDangoCredentials, separateWithDango } = require('./dango-separator.cjs');
 const { createStudioMenu } = require('./studio-menu.cjs');
+const { createStartupSplash } = require('./startup-splash.cjs');
 const { timingContextMenu } = require('./timing-context-menu.cjs');
 const { createSessionPreferences } = require('./session-preferences.cjs');
 const { createStudioShortcuts, ensureJsonFile } = require('./studio-shortcuts.cjs');
@@ -242,16 +243,34 @@ async function openProject(file) {
   const project = await loadProject(file);
   return { file, project, revision: projectRevision(project) };
 }
-function createWindow({ checkForUpdates = false } = {}) {
+function createWindow({ checkForUpdates = false, startupSplash } = {}) {
   const recoveryDirectory = path.join(app.getPath('userData'), 'recovery');
   recovery = createRecoveryStore(recoveryDirectory);
   recoverySavedForQuit = true;
   mainWindow = new BrowserWindow({
     width: 1440, height: 940, minWidth: 1050, minHeight: 680,
+    show: !startupSplash,
     title: 'The Proper Volume Karaoke Studio', backgroundColor: '#090e18', icon: brandIcon(),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   const window = mainWindow;
+  const showLoadError = error => {
+    startupSplash?.close();
+    if (window.isDestroyed() || quitting) return;
+    console.error('Studio could not load its editor:', error);
+    dialog.showErrorBox('The Proper Volume Karaoke Studio', 'Studio could not open its editor. Restart Studio and try again.');
+    window.destroy();
+  };
+  if (startupSplash) {
+    const startupRendererExited = (_event, details) => showLoadError(details.reason);
+    window.webContents.once('render-process-gone', startupRendererExited);
+    window.once('ready-to-show', () => startupSplash.editorReady(() => {
+      if (window.isDestroyed() || quitting) return;
+      window.webContents.removeListener('render-process-gone', startupRendererExited);
+      window.show();
+    }));
+    window.once('closed', startupSplash.close);
+  }
   updateStudioMenu = createStudioMenu(window, brandIcon());
   bindStudioShortcuts(window);
   microphoneExpiresAt = 0;
@@ -276,8 +295,9 @@ function createWindow({ checkForUpdates = false } = {}) {
   if (checkForUpdates) window.webContents.once('did-finish-load', () => {
     if (isEditorContents(window.webContents)) void updates.check();
   });
-  if (process.env.VITE_DEV_SERVER_URL) mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-  else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  const load = process.env.VITE_DEV_SERVER_URL ? window.loadURL(process.env.VITE_DEV_SERVER_URL)
+    : window.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  void load.catch(showLoadError);
 }
 async function chooseSave(defaultPath, name, extension) {
   const result = await dialog.showSaveDialog(mainWindow, { defaultPath, filters: [{ name, extensions: [extension] }] });
@@ -549,7 +569,8 @@ app.whenReady().then(() => {
       }, engine);
     } finally { alignmentBusy = false; }
   }));
-  createWindow({ checkForUpdates: true });
+  const startupSplash = createStartupSplash(new URL('src/splash/index.html', editorUrl()).href, brandIcon());
+  createWindow({ checkForUpdates: true, startupSplash });
 });
 
 app.on('before-quit', () => { quitting = true; });

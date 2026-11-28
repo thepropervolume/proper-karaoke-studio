@@ -25,6 +25,7 @@ import { PreferencesDialog, preferenceError, type StudioPreferenceSection } from
 import { StudioUpdateNotice, useStudioUpdates } from './StudioUpdates';
 import { useStudioShortcuts } from './useStudioShortcuts';
 import { LyricAppearance } from './LyricAppearance';
+import { appearanceKey, readAppearance, type Appearance } from './studio-appearance';
 import { paintStudioBars } from './lyric-bars';
 import { BackdropPreview } from './BackdropPreview';
 import { VideoPresentationDialog, type PresentationAsset } from './VideoPresentationDialog';
@@ -59,17 +60,7 @@ const workspaces = [
   { id: 'export', label: 'Export', icon: 'export' },
 ] as const;
 type Workspace = typeof workspaces[number]['id'];
-type Appearance = { theme: 'day' | 'night'; accent: 'blue' | 'pink' | 'purple' };
-const appearanceKey = 'tpv-studio-appearance';
 const panelWidthKey = 'tpv-studio-inspector-width';
-
-function readAppearance(): Appearance {
-  try {
-    const saved: Partial<Appearance> = JSON.parse(window.localStorage.getItem(appearanceKey) || '{}');
-    return { theme: saved.theme === 'day' ? 'day' : 'night',
-      accent: saved.accent === 'pink' || saved.accent === 'purple' ? saved.accent : 'blue' };
-  } catch { return { theme: 'night', accent: 'blue' }; }
-}
 
 function readInspectorWidth() {
   try {
